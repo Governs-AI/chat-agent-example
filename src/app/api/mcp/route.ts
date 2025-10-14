@@ -2,11 +2,26 @@ import { NextRequest } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import { precheck, createMCPPrecheckRequest, fetchBudgetContext } from '@/lib/precheck';
 import { MCPRequest, MCPResponse } from '@/lib/types';
-import { getPrecheckUserIdDetails } from '@/lib/utils';
 import { mockTools } from '@/lib/mock-tools';
+import { auth } from '@/lib/auth';
 
 export async function POST(request: NextRequest) {
   try {
+    // Get authenticated session
+    const session = await auth();
+    
+    if (!session?.user) {
+      return Response.json(
+        { success: false, error: 'Unauthorized - please login' } as MCPResponse,
+        { status: 401 }
+      );
+    }
+
+    // Extract user context from session
+    const user = session.user as any;
+    const userId = user.governs_user_id || user.id;
+    const apiKey = process.env.PRECHECK_API_KEY; // Use server-side API key
+
     const body: MCPRequest = await request.json();
     const { tool, args } = body;
 
@@ -20,7 +35,6 @@ export async function POST(request: NextRequest) {
     const corrId = uuidv4();
 
     // Step 1: Fetch budget context and precheck the MCP call
-    const { userId, apiKey } = getPrecheckUserIdDetails();
     const budgetContext = await fetchBudgetContext(apiKey);
 
     const precheckRequest = createMCPPrecheckRequest(tool, args || {}, corrId, undefined, undefined, budgetContext);

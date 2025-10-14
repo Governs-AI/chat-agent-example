@@ -4,12 +4,13 @@ A minimal, production-lean demo chat application that demonstrates the precheck-
 
 ## Features
 
+- **GovernsAI Authentication**: Secure login with GovernsAI OIDC provider
+- **User Context**: Organization-based access control and personalized experience
 - **Precheck Integration**: Every chat message and tool call is automatically checked against governance policies
 - **Multi-Provider Support**: Switch between OpenAI and Ollama (local) providers
 - **Real-time Streaming**: Server-sent events for responsive chat experience
 - **Decision Visualization**: See policy decisions (allow, redact, block, confirm) in real-time
 - **MCP Tool Demos**: Mock Model Context Protocol tool calls with governance
-- **No Authentication**: Simple demo without login requirements
 
 ## Policy Decisions
 
@@ -57,7 +58,20 @@ The app demonstrates four types of governance decisions:
    
    # Firecrawl API (for web search and scraping)
    FIRECRAWL_API_KEY=fc-your-firecrawl-api-key
+   
+   # GovernsAI Authentication (required)
+   AUTH_SECRET=your-generated-secret-here
+   NEXTAUTH_URL=http://localhost:3000
+   GOVERNSAI_CLIENT_ID=your-chatbot-client-id
+   GOVERNSAI_CLIENT_SECRET=your-chatbot-client-secret
    ```
+   
+   **Generate AUTH_SECRET**:
+   ```bash
+   openssl rand -base64 32
+   ```
+   
+   **Get GovernsAI Credentials**: Contact the GovernsAI team for your client ID and secret.
 
 3. **Start Ollama (if using local provider)**:
    ```bash
@@ -73,10 +87,33 @@ The app demonstrates four types of governance decisions:
 
 5. **Open your browser** to `http://localhost:3000`
 
+You will be redirected to the login page. Click "Login with GovernsAI" to authenticate.
+
+## Authentication
+
+This app uses GovernsAI's OIDC provider for secure authentication:
+
+- **Login Flow**: Standard OAuth 2.0 / OpenID Connect flow
+- **User Context**: Automatically extracts organization details from ID token
+- **Session Management**: Server-side session with Auth.js v5
+- **Protected Routes**: All routes require authentication (except `/login` and `/api/auth/*`)
+
+**Custom Claims in Token**:
+- `governs_user_id`: Original dashboard user ID
+- `org_id`: Organization ID
+- `org_slug`: Organization slug (display name)
+- `org_role`: User's role in organization (e.g., ADMIN, MEMBER)
+
+These claims are used for:
+- Precheck API calls (user identification)
+- Usage tracking (org-based billing)
+- Personalized UI (showing user/org info)
+
 ## Architecture
 
 ### Tech Stack
 - **Frontend**: Next.js 14 (App Router) + TypeScript + TailwindCSS
+- **Authentication**: Auth.js v5 (NextAuth) with OIDC provider
 - **AI Providers**: OpenAI API, Ollama (OpenAI-compatible)
 - **Streaming**: Server-Sent Events (SSE)
 - **Governance**: External precheck service integration

@@ -2,11 +2,11 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
+import { useSession } from 'next-auth/react';
 import { Message as MessageType, Provider, StreamEvent, Decision, isValidDecision } from '@/lib/types';
 import Message from './Message';
 import ProviderSwitch from './ProviderSwitch';
 import MCPToolTester from './MCPToolTester';
-import { getPrecheckUserIdDetails } from '@/lib/utils';
 
 // Example prompts to demonstrate different precheck behaviors and MCP tools
 const examplePrompts = [
@@ -53,6 +53,7 @@ const examplePrompts = [
 ];
 
 export default function Chat() {
+  const { data: session } = useSession();
   const [messages, setMessages] = useState<MessageType[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -363,10 +364,7 @@ export default function Chat() {
     setMessages(prev => [...prev, assistantMessage]);
 
     try {
-
-      const { userId, apiKey } = getPrecheckUserIdDetails();
-
-      // Call chat API with streaming
+      // Call chat API with streaming (session is handled on server-side)
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: {
@@ -375,8 +373,6 @@ export default function Chat() {
         body: JSON.stringify({
           messages: newMessages,
           provider,
-          userId,
-          apiKey,
         }),
       });
 

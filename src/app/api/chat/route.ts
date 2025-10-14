@@ -5,11 +5,11 @@ import { OpenAIProvider } from '@/lib/providers/openai';
 import { OllamaProvider } from '@/lib/providers/ollama';
 import { SSEWriter } from '@/lib/sse';
 import { ChatRequest, Provider, Message, ToolCall } from '@/lib/types';
-import { getPrecheckUserIdDetails } from '@/lib/utils';
 import { AVAILABLE_TOOLS } from '@/lib/tools';
 import { getToolMetadata } from '@/lib/tool-metadata';
 import { fetchPoliciesFromPlatform, registerAgentTools, registerToolsWithMetadata, getToolMetadataFromPlatform } from '@/lib/platform-api';
 import { getSDKClient } from '@/lib/sdk-client';
+import { auth } from '@/lib/auth';
 
 // Helper function to record usage after AI call using SDK
 async function recordUsage(
@@ -234,6 +234,22 @@ async function executeToolCall(toolCall: ToolCall, writer: SSEWriter, userId?: s
 
 export async function POST(request: NextRequest) {
   try {
+    // Get authenticated session
+    const session = await auth();
+    
+    if (!session?.user) {
+      return Response.json(
+        { error: 'Unauthorized - please login' },
+        { status: 401 }
+      );
+    }
+
+    // Extract user context from session
+    const user = session.user as any;
+    const userId = user.governs_user_id || user.id;
+    const orgId = user.org_id;
+    const apiKey = process.env.PRECHECK_API_KEY; // Use server-side API key
+
     const body: ChatRequest = await request.json();
     const { messages, model, provider: requestProvider } = body;
 
@@ -277,11 +293,12 @@ export async function POST(request: NextRequest) {
         }
 
         const policy = platformData.policy;
-        // Use the seeded organization ID from the database
-        const orgId = platformData.orgId || 'cmg83v4ki00005q6app5ouwrw'; // Get orgId from platform data or use seeded org
+        // Use org_id from authenticated session, fallback to platform data or seeded org
+        const finalOrgId = orgId || platformData.orgId || 'cmg83v4ki00005q6app5ouwrw';
 
+        console.log('Session orgId:', orgId);
         console.log('Platform data orgId:', platformData.orgId);
-        console.log('Using orgId for usage recording:', orgId);
+        console.log('Using orgId for usage recording:', finalOrgId);
 
         // Register this agent's tools with the platform (with full metadata for auto-discovery)
         await registerToolsWithMetadata(AVAILABLE_TOOLS);
@@ -292,8 +309,6 @@ export async function POST(request: NextRequest) {
 
         // Step 2: Precheck with user context, policy, and tool metadata
         const chatToolMetadata = getToolMetadataFromPlatform('model.chat', platformToolMetadata) || getToolMetadata('model.chat');
-        // Get user context for all flows
-        const { userId, apiKey } = getPrecheckUserIdDetails();
 
         // Check if this is a confirmation approved continuation
         const lastMessage = messages[messages.length - 1];
@@ -472,10 +487,10 @@ When using tools, make the tool call directly. Don't explain beforehand.`,
           writer.writeDone();
 
           // Record usage after successful completion
-          if (usageData && userId && orgId) {
+          if (usageData && userId && finalOrgId) {
             console.log('📊 Recording usage:', {
               userId,
-              orgId,
+              orgId: finalOrgId,
               model: usageData.model,
               inputTokens: usageData.inputTokens,
               outputTokens: usageData.outputTokens,
@@ -486,7 +501,7 @@ When using tools, make the tool call directly. Don't explain beforehand.`,
             try {
               await recordUsage(
                 userId,
-                orgId,
+                finalOrgId,
                 usageData.model,
                 usageData.inputTokens,
                 usageData.outputTokens,
@@ -506,10 +521,10 @@ When using tools, make the tool call directly. Don't explain beforehand.`,
             console.warn('⚠️ Usage recording skipped:', {
               hasUsageData: !!usageData,
               hasUserId: !!userId,
-              hasOrgId: !!orgId,
+              hasOrgId: !!finalOrgId,
               usageData,
               userId,
-              orgId
+              orgId: finalOrgId
             });
           }
         } catch (error) {
