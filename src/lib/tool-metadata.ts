@@ -5,7 +5,7 @@ export const TOOL_METADATA: Record<string, ToolConfigMetadata> = {
   'weather_current': {
     tool_name: 'weather_current',
     scope: 'net.external',
-    direction: 'both',
+    direction: 'ingress',
     metadata: {
       category: 'data',
       risk_level: 'low',
@@ -15,7 +15,7 @@ export const TOOL_METADATA: Record<string, ToolConfigMetadata> = {
   'weather_forecast': {
     tool_name: 'weather_forecast',
     scope: 'net.external',
-    direction: 'both',
+    direction: 'ingress',
     metadata: {
       category: 'data',
       risk_level: 'low',
@@ -46,7 +46,7 @@ export const TOOL_METADATA: Record<string, ToolConfigMetadata> = {
   'db_query': {
     tool_name: 'db_query',
     scope: 'local',
-    direction: 'both',
+    direction: 'ingress',
     metadata: {
       category: 'data',
       risk_level: 'high',
@@ -146,7 +146,7 @@ export const TOOL_METADATA: Record<string, ToolConfigMetadata> = {
   'model.chat': {
     tool_name: 'model.chat',
     scope: 'net.external',
-    direction: 'both',
+    direction: 'ingress',
     metadata: {
       category: 'ai',
       risk_level: 'medium',

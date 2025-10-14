@@ -9,8 +9,9 @@ import { getPrecheckUserIdDetails } from '@/lib/utils';
 import { AVAILABLE_TOOLS } from '@/lib/tools';
 import { getToolMetadata } from '@/lib/tool-metadata';
 import { fetchPoliciesFromPlatform, registerAgentTools, registerToolsWithMetadata, getToolMetadataFromPlatform } from '@/lib/platform-api';
+import { getSDKClient } from '@/lib/sdk-client';
 
-// Helper function to record usage after AI call
+// Helper function to record usage after AI call using SDK
 async function recordUsage(
   userId: string,
   orgId: string,
@@ -22,24 +23,25 @@ async function recordUsage(
   metadata?: Record<string, any>
 ) {
   try {
-    const platformUrl = process.env.NEXT_PUBLIC_PLATFORM_URL || 'http://localhost:3002';
+    const client = getSDKClient();
 
-    await fetch(`${platformUrl}/api/usage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        userId,
-        orgId,
-        model,
-        inputTokens,
-        outputTokens,
-        tool,
-        correlationId,
-        metadata,
-      }),
+    // Calculate cost (simplified calculation - in real app, use proper cost calculation)
+    const cost = (inputTokens * 0.0001) + (outputTokens * 0.0002);
+
+    await client.recordUsage({
+      userId,
+      orgId,
+      provider: 'openai', // or determine from model
+      model,
+      inputTokens,
+      outputTokens,
+      cost,
+      costType: 'external',
+      tool: tool || 'chat',
+      correlationId,
     });
   } catch (error) {
-    console.error('Failed to record usage:', error);
+    console.error('Failed to record usage via SDK:', error);
     // Don't throw - usage recording failure shouldn't break the chat
   }
 }

@@ -1,5 +1,7 @@
 import { PrecheckRequest, PrecheckResponse } from './types';
 import { getPrecheckUserIdDetails } from './utils';
+import { getSDKClient, getSDKClientForUser } from './sdk-client';
+import { GovernsAIError, PrecheckError as SDKPrecheckError, PrecheckRequest as SDKPrecheckRequest, PrecheckResponse as SDKPrecheckResponse } from '@governs-ai/sdk';
 
 export class PrecheckError extends Error {
   constructor(
@@ -12,37 +14,15 @@ export class PrecheckError extends Error {
   }
 }
 
-// Helper function to fetch budget context
+// Helper function to fetch budget context using SDK
 export async function fetchBudgetContext(apiKey?: string): Promise<any> {
-  const { apiKey: defaultApiKey } = getPrecheckUserIdDetails();
-  const finalApiKey = apiKey || defaultApiKey;
-
-  const platformUrl = process.env.NEXT_PUBLIC_PLATFORM_URL || 'http://localhost:3002';
-
   try {
-    const response = await fetch(`${platformUrl}/api/budget/context`, {
-      method: 'GET',
-      headers: {
-        'X-Governs-Key': finalApiKey,
-      },
-    });
-
-    if (!response.ok) {
-      console.warn('Failed to fetch budget context, using mock data for testing');
-      // Return mock budget context for testing
-      return {
-        monthly_limit: 1000.00,
-        current_spend: 0.00,
-        llm_spend: 0.00,
-        purchase_spend: 0.00,
-        remaining_budget: 1000.00,
-        budget_type: 'user'
-      };
-    }
-
-    return await response.json();
+    const client = getSDKClient();
+    const { userId } = getPrecheckUserIdDetails();
+    const budgetContext = await client.getBudgetContext(userId);
+    return budgetContext;
   } catch (error) {
-    console.warn('Error fetching budget context, using mock data for testing:', error);
+    console.warn('Error fetching budget context via SDK, using mock data for testing:', error);
     // Return mock budget context for testing
     return {
       monthly_limit: 1000.00,
@@ -60,64 +40,73 @@ export async function precheck(
   userId?: string,
   apiKey?: string
 ): Promise<PrecheckResponse> {
-  const { userId: defaultUserId, apiKey: defaultApiKey } = getPrecheckUserIdDetails();
-
-  const baseUrl = process.env.PRECHECK_URL || 'http://localhost:8080';
-
-  // Use provided userId/apiKey or fall back to defaults
-  const finalUserId = userId || defaultUserId;
-  const finalApiKey = apiKey || defaultApiKey;
-
-  // Construct the user-specific precheck URL
-  // const url = `${baseUrl}/v1/u/${finalUserId}/precheck`;
-
   try {
-    const response = await fetch(baseUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Governs-Key': finalApiKey,
-      },
-      body: JSON.stringify(input),
-    });
+    // Use SDK client for precheck
+    const client = userId ? getSDKClientForUser(userId, apiKey) : getSDKClient();
+    const finalUserId = userId || getPrecheckUserIdDetails().userId;
 
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => 'Unknown error');
+    // Convert local types to SDK types
+    const sdkRequest: SDKPrecheckRequest = {
+      tool: input.tool,
+      scope: input.scope,
+      raw_text: input.raw_text,
+      payload: input.payload,
+      tags: input.tags,
+      corr_id: input.corr_id,
+      policy_config: input.policy_config as any, // Type assertion for compatibility
+      tool_config: input.tool_config as any, // Type assertion for compatibility
+      budget_context: input.budget_context,
+    };
 
-      // If precheck service is not available, BLOCK the request for security
-      if (response.status === 404 || response.status === 500) {
-        console.error('⛔ Precheck service not available - BLOCKING request for security');
-        return {
-          decision: 'block',
-          content: {
-            messages: input.payload?.messages || [],
-            args: input.payload?.args || input.payload || {}
-          },
-          reasons: ['Precheck service unavailable - request blocked for security'],
-          pii_findings: [],
-          metadata: {
-            mock: true,
-            error: 'Precheck service not reachable',
-            status: response.status
-          }
-        } as PrecheckResponse;
-      }
+    const sdkResponse = await client.precheckRequest(sdkRequest, finalUserId);
 
-      throw new PrecheckError(
-        `Precheck request failed: ${response.status} ${response.statusText}`,
-        response.status,
-        errorText
-      );
-    }
+    // Convert SDK response back to local types
+    const response: PrecheckResponse = {
+      decision: sdkResponse.decision as any, // Type assertion for compatibility
+      content: sdkResponse.content,
+      reasons: sdkResponse.reasons,
+      pii_findings: sdkResponse.pii_findings,
+      metadata: sdkResponse.metadata,
+    };
 
-    const result = await response.json();
-    return result as PrecheckResponse;
+    return response;
   } catch (error) {
-    if (error instanceof PrecheckError) {
-      throw error;
+    // Handle SDK errors
+    if (error instanceof SDKPrecheckError) {
+      console.error('⛔ SDK Precheck failed:', error.message);
+      return {
+        decision: 'block',
+        content: {
+          messages: input.payload?.messages || [],
+          args: input.payload?.args || input.payload || {}
+        },
+        reasons: [`Precheck failed: ${error.message}`],
+        pii_findings: [],
+        metadata: {
+          mock: true,
+          error: error.message,
+          errorType: 'sdk_precheck_error'
+        }
+      } as PrecheckResponse;
+    } else if (error instanceof GovernsAIError) {
+      console.error('⛔ GovernsAI SDK error:', error.message);
+      return {
+        decision: 'block',
+        content: {
+          messages: input.payload?.messages || [],
+          args: input.payload?.args || input.payload || {}
+        },
+        reasons: [`SDK error: ${error.message}`],
+        pii_findings: [],
+        metadata: {
+          mock: true,
+          error: error.message,
+          errorType: 'sdk_error'
+        }
+      } as PrecheckResponse;
     }
 
-    // Handle network errors - BLOCK for security
+    // Handle other errors - BLOCK for security
     console.error('⛔ Precheck service connection failed - BLOCKING request for security');
     console.error('Error:', error instanceof Error ? error.message : 'Unknown error');
     return {

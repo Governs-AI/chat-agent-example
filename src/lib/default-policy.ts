@@ -45,7 +45,7 @@ export const DEFAULT_POLICY: PolicyConfig = {
       },
     },
     'db_query': {
-      direction: 'both',
+      direction: 'ingress',
       action: 'redact',
       allow_pii: {
         'PII:email_address': 'redact',
@@ -105,7 +105,7 @@ export const DEFAULT_POLICY: PolicyConfig = {
       allow_pii: {},
     },
     'model.chat': {
-      direction: 'both',
+      direction: 'ingress',
       action: 'redact',
       allow_pii: {
         'PII:email_address': 'redact',

@@ -1,5 +1,6 @@
 import { PolicyConfig, ToolConfigMetadata } from './types';
 import { getPrecheckUserIdDetails } from './utils';
+import { getSDKClient } from './sdk-client';
 
 // Platform API configuration
 const PLATFORM_BASE_URL = process.env.PLATFORM_URL || 'http://localhost:3002';
@@ -29,7 +30,7 @@ export interface AgentToolsResponse {
 // Fetch policies from the platform
 export async function fetchPoliciesFromPlatform(): Promise<PlatformPolicyResponse> {
   try {
-    const {userId, apiKey} = getPrecheckUserIdDetails();
+    const { userId, apiKey } = getPrecheckUserIdDetails();
     const url = new URL(`${PLATFORM_BASE_URL}/api/agents/policies`);
     url.searchParams.set('userId', userId);
     url.searchParams.set('apiKey', apiKey);
@@ -75,7 +76,7 @@ export async function fetchPoliciesFromPlatform(): Promise<PlatformPolicyRespons
 export async function registerAgentTools(tools: string[]): Promise<AgentToolsResponse | null> {
   try {
     const { userId, apiKey } = getPrecheckUserIdDetails();
-    
+
     const response = await fetch(`${PLATFORM_BASE_URL}/api/agents/tools`, {
       method: 'POST',
       headers: {
@@ -107,65 +108,38 @@ export async function registerAgentTools(tools: string[]): Promise<AgentToolsRes
   }
 }
 
-// Register tools with full metadata (for auto-discovery)
+// Register tools with full metadata using SDK
 export async function registerToolsWithMetadata(toolDefinitions: any[]): Promise<any> {
   try {
-    const apiKey = getApiKey();
-    
+    const client = getSDKClient();
+
     // Import tool metadata
     const { getToolMetadata } = await import('./tool-metadata');
-    
+
     const toolsToRegister = toolDefinitions.map(tool => {
       const toolName = tool.function?.name || tool.name;
       const localMetadata = getToolMetadata(toolName);
-      
+
       return {
-        toolName,
-        displayName: toolName,
-        description: tool.function?.description || tool.description || '',
-        category: localMetadata?.metadata.category || 'other',
-        riskLevel: localMetadata?.metadata.risk_level || 'medium',
-        scope: localMetadata?.scope || 'net.external',
-        direction: localMetadata?.direction || 'both',
-        metadata: {
-          parameters: tool.function?.parameters || tool.parameters,
-        },
-        requiresApproval: localMetadata?.metadata.requires_approval ?? false,
-        isActive: true,
+        type: "function" as const,
+        function: {
+          name: toolName,
+          description: tool.function?.description || tool.description || '',
+          parameters: tool.function?.parameters || tool.parameters || {
+            type: "object",
+            properties: {},
+            required: []
+          }
+        }
       };
     });
 
-    const { userId } = getPrecheckUserIdDetails();
-    
-    const response = await fetch(`${PLATFORM_BASE_URL}/api/agents/tools/register`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        apiKey: apiKey,
-        userId: userId,
-        tools: toolsToRegister,
-      }),
-    });
-
-    if (!response.ok) {
-      const contentType = response.headers.get('content-type');
-      if (contentType?.includes('application/json')) {
-        const errorData = await response.json();
-        console.warn('⚠️  Failed to register tools with platform:', errorData);
-      } else {
-        const errorText = await response.text();
-        console.warn('⚠️  Failed to register tools (non-JSON response):', response.status);
-      }
-      return null;
-    }
-
-    const data = await response.json();
-    console.log('✅ Tools registered with platform:', data);
-    return data;
+    // Use SDK to register tools
+    const result = await client.tools.registerTools(toolsToRegister as any);
+    console.log('✅ Tools registered with platform via SDK:', result);
+    return result;
   } catch (error) {
-    console.warn('⚠️  Could not register tools with platform (service not available)');
+    console.warn('⚠️  Could not register tools with platform via SDK (service not available)');
     if (error instanceof Error) {
       console.warn('Details:', error.message);
     }

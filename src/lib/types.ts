@@ -11,12 +11,12 @@ export interface Message {
   correlationId?: string;
 }
 
-export type Decision = "allow" | "redact" | "block" | "confirm";
+export type Decision = "allow" | "deny" | "redact" | "block" | "confirm";
 
 // Type guard function to check if a string is a valid Decision
 export function isValidDecision(value: any): value is Decision {
   return typeof value === 'string' &&
-    ['allow', 'redact', 'block', 'confirm'].includes(value);
+    ['allow', 'deny', 'redact', 'block', 'confirm'].includes(value);
 }
 
 export type Provider = "openai" | "ollama";
@@ -27,8 +27,8 @@ export interface PolicyDefaults {
 }
 
 export interface ToolAccessRule {
-  direction: "ingress" | "egress" | "both";
-  action: "allow" | "redact" | "block" | "confirm";
+  direction: "ingress" | "egress";
+  action: Decision;
   allow_pii?: Record<string, string>; // PII type -> action mapping
 }
 
@@ -46,7 +46,7 @@ export interface PolicyConfig {
 export interface ToolConfigMetadata {
   tool_name: string;
   scope: string;
-  direction: "ingress" | "egress" | "both";
+  direction: "ingress" | "egress";
   metadata: {
     category: string;
     risk_level: "low" | "medium" | "high" | "critical";
