@@ -32,44 +32,22 @@ export async function fetchPoliciesFromPlatform(): Promise<PlatformPolicyRespons
   try {
     const client = getSDKClient();
     
-    // Use SDK getPolicies method if available
+    // Use SDK getPolicies method
     const anyClient = client as any;
-    if (anyClient.getPolicies) {
-      const policies = await anyClient.getPolicies();
-      return {
-        policy: policies?.policy || null,
-        toolMetadata: policies?.toolMetadata || {},
-        orgId: policies?.orgId,
-      };
-    }
+    const policies = await anyClient.getPolicies();
     
-    // Fallback to REST API if SDK method not available
-    const { userId, apiKey } = getPrecheckUserIdDetails();
-    const url = new URL(`${PLATFORM_BASE_URL}/api/agents/policies`);
-    url.searchParams.set('userId', userId);
-    url.searchParams.set('apiKey', apiKey);
-
-    const response = await fetch(url.toString(), {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error(`Failed to fetch policies: ${response.status} ${response.statusText}`);
-    }
-
-    const data = await response.json();
-
     // Warn if no policy found - this should be configured in the platform
-    if (!data.policy) {
+    if (!policies?.policy) {
       console.error('❌ No policy found in platform database!');
       console.error('   Please create a policy in the platform UI or run: pnpm db:seed');
       console.error('   Blocking all requests for security.');
     }
-
-    return data;
+    
+    return {
+      policy: policies?.policy || null,
+      toolMetadata: policies?.toolMetadata || {},
+      orgId: policies?.orgId,
+    };
   } catch (error) {
     console.error('❌ Platform API (SDK) not available - BLOCKING all requests for security');
     if (error instanceof Error) {
@@ -145,23 +123,11 @@ export async function registerToolsWithMetadata(toolDefinitions: any[]): Promise
       };
     });
 
-    // Use SDK registerTools method if available
+    // Use SDK registerTools method
     const anyClient = client as any;
-    if (anyClient.registerTools) {
-      const result = await anyClient.registerTools(toolsToRegister as any, getPrecheckUserIdDetails().userId);
-      console.log('✅ Tools registered with platform via SDK:', result);
-      return result;
-    }
-    
-    // Fallback to tools.registerTools if available
-    if (anyClient.tools?.registerTools) {
-      const result = await anyClient.tools.registerTools(toolsToRegister as any);
-      console.log('✅ Tools registered with platform via SDK (fallback):', result);
-      return result;
-    }
-    
-    console.warn('⚠️  No SDK tool registration method available');
-    return null;
+    const result = await anyClient.registerTools(toolsToRegister as any, getPrecheckUserIdDetails().userId);
+    console.log('✅ Tools registered with platform via SDK:', result);
+    return result;
   } catch (error) {
     console.warn('⚠️  Could not register tools with platform via SDK (service not available)');
     if (error instanceof Error) {

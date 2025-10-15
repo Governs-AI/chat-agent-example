@@ -61,39 +61,13 @@ export async function searchMemoryContext(query: string, userId: string, limit: 
         
         // Use SDK searchContext method
         const anyClient = client as any;
-        if (anyClient.searchContext) {
-            const results = await anyClient.searchContext({
-                query,
-                userId,
-                limit,
-                scope: 'user',
-            });
-            return results || [];
-        }
-        
-        // Fallback to Platform REST API if SDK method not available
-        const platformUrl = process.env.PLATFORM_URL || 'http://localhost:3002';
-        const response = await fetch(`${platformUrl}/api/v1/context/search`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Governs-Key': process.env.PRECHECK_API_KEY || '',
-            },
-            body: JSON.stringify({
-                query,
-                userId,
-                limit,
-                scope: 'user',
-            })
+        const results = await anyClient.searchContext({
+            query,
+            userId,
+            limit,
+            scope: 'user',
         });
-        
-        if (!response.ok) {
-            console.warn('Memory search failed:', response.status);
-            return [];
-        }
-        
-        const data = await response.json();
-        return data.results || [];
+        return results || [];
     } catch (error) {
         console.warn('Memory search error:', error);
         return [];
@@ -107,32 +81,12 @@ export async function getRecentMemoryContext(userId: string, limit: number = 3):
         
         // Use SDK getRecentContext method
         const anyClient = client as any;
-        if (anyClient.getRecentContext) {
-            const results = await anyClient.getRecentContext({
-                userId,
-                limit,
-                scope: 'user',
-            });
-            return results || [];
-        }
-        
-        // Fallback to Platform REST API if SDK method not available
-        const platformUrl = process.env.PLATFORM_URL || 'http://localhost:3002';
-        const response = await fetch(`${platformUrl}/api/v1/context/recent`, {
-            method: 'GET',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Governs-Key': process.env.PRECHECK_API_KEY || '',
-            },
+        const results = await anyClient.getRecentContext({
+            userId,
+            limit,
+            scope: 'user',
         });
-        
-        if (!response.ok) {
-            console.warn('Recent memory fetch failed:', response.status);
-            return [];
-        }
-        
-        const data = await response.json();
-        return data.results || [];
+        return results || [];
     } catch (error) {
         console.warn('Recent memory error:', error);
         return [];
