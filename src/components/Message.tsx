@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { Message as MessageType } from "@/lib/types";
 import DecisionBadge from "./DecisionBadge";
 
@@ -12,6 +13,36 @@ export default function Message({ message, className = "" }: MessageProps) {
   const isUser = message.role === "user";
   const isTool = message.role === "tool";
   const isBlocked = message.decision === "block";
+  const [toast, setToast] = useState<string | null>(null);
+
+  const canRemember = !isTool && !!message.content?.trim();
+
+  const onRemember = async () => {
+    try {
+      const res = await fetch('/api/context/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content: message.content,
+          contentType: message.role === 'user' ? 'user_message' : 'agent_message',
+          metadata: {
+            messageId: message.id,
+            decision: message.decision,
+            reasons: message.reasons,
+          }
+        })
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Failed to save context (${res.status})`);
+      }
+      setToast('Saved to memory');
+      setTimeout(() => setToast(null), 2000);
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : 'Save failed');
+      setTimeout(() => setToast(null), 2500);
+    }
+  }
 
   return (
     <div
@@ -86,6 +117,24 @@ export default function Message({ message, className = "" }: MessageProps) {
               />
             </div>
           )}
+
+        {/* Remember action & toast */}
+        {canRemember && (
+          <div className={`mt-2 ${isUser ? 'text-right' : 'text-left'}`}>
+            <button
+              onClick={onRemember}
+              className="inline-flex items-center gap-2 px-3 py-1.5 text-xs rounded-lg border bg-white hover:bg-gray-50 text-gray-700"
+              title="Save this to memory"
+            >
+              🧠 Remember this
+            </button>
+          </div>
+        )}
+        {toast && (
+          <div className={`mt-2 ${isUser ? 'text-right' : 'text-left'}`}>
+            <span className="inline-block text-xs px-2 py-1 rounded bg-gray-800 text-white">{toast}</span>
+          </div>
+        )}
 
         {/* Show confirmation link if required */}
         {message.confirmationRequired && message.confirmationUrl && (

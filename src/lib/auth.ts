@@ -19,8 +19,6 @@ export const {
           scope: "openid profile email",
         },
       },
-      // Explicitly set the redirect URI if needed
-      redirect_uri: process.env.NEXTAUTH_URL + "/api/auth/callback/governsai",
       profile(profile) {
         return {
           id: profile.sub,

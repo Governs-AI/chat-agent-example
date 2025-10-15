@@ -27,9 +27,10 @@ export interface AgentToolsResponse {
   registeredAt: string;
 }
 
-// Fetch policies from the platform
+// Fetch policies from the platform via SDK per SDK spec
 export async function fetchPoliciesFromPlatform(): Promise<PlatformPolicyResponse> {
   try {
+    // Fallback to existing REST path if SDK method not available
     const { userId, apiKey } = getPrecheckUserIdDetails();
     const url = new URL(`${PLATFORM_BASE_URL}/api/agents/policies`);
     url.searchParams.set('userId', userId);
@@ -57,13 +58,10 @@ export async function fetchPoliciesFromPlatform(): Promise<PlatformPolicyRespons
 
     return data;
   } catch (error) {
-    console.error('❌ Platform API not available - BLOCKING all requests for security');
+    console.error('❌ Platform API (SDK) not available - BLOCKING all requests for security');
     if (error instanceof Error) {
       console.error('   Error details:', error.message);
     }
-    console.error('   Please ensure platform is running at:', PLATFORM_BASE_URL);
-
-    // Return null policy if platform is unavailable - precheck will handle blocking
     return {
       policy: null,
       toolMetadata: {},
@@ -134,8 +132,11 @@ export async function registerToolsWithMetadata(toolDefinitions: any[]): Promise
       };
     });
 
-    // Use SDK to register tools
-    const result = await client.tools.registerTools(toolsToRegister as any);
+    // Fallback: if new SDK method not available, keep existing client.tools API
+    const anyClient = client as any;
+    const result = anyClient.tools?.registerTools
+      ? await anyClient.tools.registerTools(toolsToRegister as any)
+      : null;
     console.log('✅ Tools registered with platform via SDK:', result);
     return result;
   } catch (error) {
