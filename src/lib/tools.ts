@@ -311,48 +311,48 @@ export const AVAILABLE_TOOLS: Tool[] = [
   },
 
   // Key-Value Store
-  {
-    type: "function",
-    function: {
-      name: "kv_get",
-      description: "Get value from key-value store",
-      parameters: {
-        type: "object",
-        properties: {
-          key: {
-            type: "string",
-            description: "Key to retrieve"
-          }
-        },
-        required: ["key"]
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "kv_set",
-      description: "Set value in key-value store",
-      parameters: {
-        type: "object",
-        properties: {
-          key: {
-            type: "string",
-            description: "Key to set"
-          },
-          value: {
-            type: "string",
-            description: "Value to store"
-          },
-          ttl: {
-            type: "number",
-            description: "Time to live in seconds (default: 3600)"
-          }
-        },
-        required: ["key", "value"]
-      }
-    }
-  }
+  // {
+  //   type: "function",
+  //   function: {
+  //     name: "kv_get",
+  //     description: "Get value from key-value store",
+  //     parameters: {
+  //       type: "object",
+  //       properties: {
+  //         key: {
+  //           type: "string",
+  //           description: "Key to retrieve"
+  //         }
+  //       },
+  //       required: ["key"]
+  //     }
+  //   }
+  // },
+  // {
+  //   type: "function",
+  //   function: {
+  //     name: "kv_set",
+  //     description: "Set value in key-value store",
+  //     parameters: {
+  //       type: "object",
+  //       properties: {
+  //         key: {
+  //           type: "string",
+  //           description: "Key to set"
+  //         },
+  //         value: {
+  //           type: "string",
+  //           description: "Value to store"
+  //         },
+  //         ttl: {
+  //           type: "number",
+  //           description: "Time to live in seconds (default: 3600)"
+  //         }
+  //       },
+  //       required: ["key", "value"]
+  //     }
+  //   }
+  // }
 ];
 
 // Helper function to get tool by name

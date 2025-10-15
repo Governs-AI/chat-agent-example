@@ -1,4 +1,4 @@
-import { PrecheckRequest, PrecheckResponse } from './types';
+import { Message, PrecheckRequest, PrecheckResponse } from './types';
 import { getPrecheckUserIdDetails } from './utils';
 import { getSDKClient, getSDKClientForUser } from './sdk-client';
 import { GovernsAIError, PrecheckError as SDKPrecheckError, PrecheckRequest as SDKPrecheckRequest, PrecheckResponse as SDKPrecheckResponse } from '@governs-ai/sdk';
@@ -164,11 +164,13 @@ export function createMCPPrecheckRequest(
   corrId?: string,
   policyConfig?: any,
   toolConfig?: any,
-  budgetContext?: any
+  budgetContext?: any,
+  lastMessage?: Message
 ): PrecheckRequest {
   // Create a raw_text representation of the MCP call for precheck
-  const rawText = `MCP Tool Call: ${tool} with arguments: ${JSON.stringify(args)}`;
-
+  // const rawText = `MCP Tool Call: ${tool} with arguments: ${JSON.stringify(args)}`;
+  const rawText = lastMessage?.content || '';
+  
   // Extract purchase amount from args for payment tools
   let enhancedToolConfig = { ...toolConfig };
   if (tool === 'payment_process' && args.amount) {

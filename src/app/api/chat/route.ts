@@ -8,7 +8,7 @@ import { ChatRequest, Provider, Message, ToolCall } from '@/lib/types';
 import { AVAILABLE_TOOLS } from '@/lib/tools';
 import { getToolMetadata } from '@/lib/tool-metadata';
 import { fetchPoliciesFromPlatform, registerAgentTools, registerToolsWithMetadata, getToolMetadataFromPlatform } from '@/lib/platform-api';
-import { getSDKClient } from '@/lib/sdk-client';
+import { getSDKClient, searchMemoryContext, getRecentMemoryContext } from '@/lib/sdk-client';
 import { auth } from '@/lib/auth';
 
 // Helper function to record usage after AI call using SDK
@@ -47,7 +47,7 @@ async function recordUsage(
 }
 
 // Helper function to execute tool calls
-async function executeToolCall(toolCall: ToolCall, writer: SSEWriter, userId?: string, apiKey?: string, platformToolMetadata?: Record<string, any>, skipPrecheck: boolean = false) {
+async function executeToolCall(toolCall: ToolCall, writer: SSEWriter, userId?: string, apiKey?: string, platformToolMetadata?: Record<string, any>, skipPrecheck: boolean = false, lastMessage?: Message) {
   try {
     console.log('Executing tool call:', toolCall.function.name, 'with args:', toolCall.function.arguments);
 
@@ -96,7 +96,8 @@ async function executeToolCall(toolCall: ToolCall, writer: SSEWriter, userId?: s
         uuidv4(),
         policy,
         toolMetadata,
-        budgetContext // ← Pass budget context
+        budgetContext, // ← Pass budget context
+        lastMessage
       );
 
       precheckResponse = await precheck(precheckRequest, userId, apiKey);
@@ -236,7 +237,7 @@ export async function POST(request: NextRequest) {
   try {
     // Get authenticated session
     const session = await auth();
-    
+
     if (!session?.user) {
       return Response.json(
         { error: 'Unauthorized - please login' },
@@ -404,6 +405,35 @@ export async function POST(request: NextRequest) {
         // Use possibly redacted messages from precheck response
         const processedMessages = precheckResponse.content?.messages || messages;
 
+        // Search for relevant memory context before sending to AI
+        let memoryContext = '';
+        try {
+          const lastUserMessage = processedMessages
+            .filter(msg => msg.role === 'user')
+            .slice(-1)[0];
+          
+          if (lastUserMessage?.content) {
+            // Search for relevant memories
+            const searchResults = await searchMemoryContext(lastUserMessage.content, userId, 3);
+            
+            // Also get recent memories
+            const recentResults = await getRecentMemoryContext(userId, 2);
+            
+            // Combine and format memory context
+            const allMemories = [...searchResults, ...recentResults];
+
+            console.log('🧠 All memories:', allMemories);
+            if (allMemories.length > 0) {
+              memoryContext = '\n\nRelevant memories:\n' + 
+                allMemories.map((mem, i) => `${i + 1}. ${mem.content}`).join('\n');
+              console.log('🧠 Found memory context:', allMemories.length, 'items');
+            }
+          }
+        } catch (error) {
+          console.warn('Memory search failed:', error);
+          // Continue without memory context
+        }
+
         // Step 3: Get provider and stream response
         let chatProvider;
         try {
@@ -435,7 +465,10 @@ export async function POST(request: NextRequest) {
 
         try {
           // Enable tools for both OpenAI and Ollama providers
-          const tools = AVAILABLE_TOOLS;
+          // Filter out KV tools to prevent accidental memory writes in normal chat
+          const tools = AVAILABLE_TOOLS.filter(tool => 
+            !tool.function.name.startsWith('kv_')
+          );
 
           // Add system message with tool information for both providers
           if (tools) {
@@ -455,7 +488,9 @@ Common coordinates:
 - Tokyo: 35.6762, 139.6503
 - Berlin: 52.5200, 13.4050
 
-When using tools, make the tool call directly. Don't explain beforehand.`,
+When using tools, make the tool call directly. Don't explain beforehand.
+
+Note: Do not use tools for general questions or chats.${memoryContext}`,
             };
             processedMessages.unshift(systemMessage);
           }
@@ -472,7 +507,7 @@ When using tools, make the tool call directly. Don't explain beforehand.`,
               // Execute the tool call with platform metadata
               // Skip precheck if this is a confirmation approved continuation
               const skipPrecheck = confirmationApprovedMatch !== null;
-              await executeToolCall(toolCall, writer, userId, apiKey, platformToolMetadata, skipPrecheck);
+              await executeToolCall(toolCall, writer, userId, apiKey, platformToolMetadata, skipPrecheck, lastMessage);
             } else if (chunk.type === 'usage') {
               // Capture usage data for recording
               usageData = {

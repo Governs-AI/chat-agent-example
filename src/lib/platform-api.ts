@@ -27,10 +27,23 @@ export interface AgentToolsResponse {
   registeredAt: string;
 }
 
-// Fetch policies from the platform via SDK per SDK spec
+// Fetch policies from the platform via SDK
 export async function fetchPoliciesFromPlatform(): Promise<PlatformPolicyResponse> {
   try {
-    // Fallback to existing REST path if SDK method not available
+    const client = getSDKClient();
+    
+    // Use SDK getPolicies method if available
+    const anyClient = client as any;
+    if (anyClient.getPolicies) {
+      const policies = await anyClient.getPolicies();
+      return {
+        policy: policies?.policy || null,
+        toolMetadata: policies?.toolMetadata || {},
+        orgId: policies?.orgId,
+      };
+    }
+    
+    // Fallback to REST API if SDK method not available
     const { userId, apiKey } = getPrecheckUserIdDetails();
     const url = new URL(`${PLATFORM_BASE_URL}/api/agents/policies`);
     url.searchParams.set('userId', userId);
@@ -132,13 +145,23 @@ export async function registerToolsWithMetadata(toolDefinitions: any[]): Promise
       };
     });
 
-    // Fallback: if new SDK method not available, keep existing client.tools API
+    // Use SDK registerTools method if available
     const anyClient = client as any;
-    const result = anyClient.tools?.registerTools
-      ? await anyClient.tools.registerTools(toolsToRegister as any)
-      : null;
-    console.log('✅ Tools registered with platform via SDK:', result);
-    return result;
+    if (anyClient.registerTools) {
+      const result = await anyClient.registerTools(toolsToRegister as any, getPrecheckUserIdDetails().userId);
+      console.log('✅ Tools registered with platform via SDK:', result);
+      return result;
+    }
+    
+    // Fallback to tools.registerTools if available
+    if (anyClient.tools?.registerTools) {
+      const result = await anyClient.tools.registerTools(toolsToRegister as any);
+      console.log('✅ Tools registered with platform via SDK (fallback):', result);
+      return result;
+    }
+    
+    console.warn('⚠️  No SDK tool registration method available');
+    return null;
   } catch (error) {
     console.warn('⚠️  Could not register tools with platform via SDK (service not available)');
     if (error instanceof Error) {

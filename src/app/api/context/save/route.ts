@@ -22,7 +22,22 @@ export async function POST(request: NextRequest) {
 
     const client: any = getSDKClient();
 
-    // Prefer SDK ContextClient if available
+    // Use SDK storeContext method if available
+    if (client.storeContext) {
+      const result = await client.storeContext({
+        content,
+        contentType,
+        agentId: 'demo-chat-agent',
+        conversationId,
+        correlationId,
+        metadata: { ...metadata, userId, orgId },
+        scope: scope || 'user',
+        visibility: visibility || 'private',
+      });
+      return Response.json({ success: true, result });
+    }
+    
+    // Try context.storeContext if available
     if (client.context?.storeContext) {
       const result = await client.context.storeContext({
         content,
