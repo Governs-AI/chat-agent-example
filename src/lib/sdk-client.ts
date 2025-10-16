@@ -1,5 +1,5 @@
 import { GovernsAIClient } from "@governs-ai/sdk";
-import { getPrecheckUserIdDetails } from './utils';
+import { getPrecheckApiKey } from './utils';
 
 // Create SDK client instance
 let sdkClient: GovernsAIClient | null = null;
@@ -7,51 +7,20 @@ let sdkClient: GovernsAIClient | null = null;
 export function getSDKClient(): GovernsAIClient {
     if (!sdkClient) {
         // Get user details for dynamic userId
-        const { apiKey } = getPrecheckUserIdDetails();
+        const apiKey = getPrecheckApiKey();
 
         // Create client with explicit configuration (Platform base URL per SDK spec)
         sdkClient = new GovernsAIClient({
-            apiKey: apiKey,
-            baseUrl: process.env.PRECHECK_URL || 'http://localhost:3002',
-            orgId: process.env.DEMO_ORG_ID || 'cmg83v4ki00005q6app5ouwrw', // Use seeded org ID
+            apiKey: apiKey || '',
+            baseUrl: process.env.PLATFORM_URL || '',
+            precheckBaseUrl: process.env.GOVERNS_PRECHECK_BASE_URL || '',
+            orgId: process.env.GOVERNS_ORG_ID || '', // Use seeded org ID
             timeout: 30000,
             retries: 3,
             retryDelay: 1000,
         });
     }
-
     return sdkClient;
-}
-
-// Helper to get client for specific user (for dynamic userId scenarios)
-export function getSDKClientForUser(userId: string, apiKey?: string): GovernsAIClient {
-    const { apiKey: defaultApiKey } = getPrecheckUserIdDetails();
-
-    return new GovernsAIClient({
-        apiKey: apiKey || defaultApiKey,
-        baseUrl: process.env.PRECHECK_URL || 'http://localhost:3002',
-        orgId: process.env.DEMO_ORG_ID || 'cmg83v4ki00005q6app5ouwrw',
-        timeout: 30000,
-        retries: 3,
-        retryDelay: 1000,
-    });
-}
-
-// Test connection helper
-export async function testSDKConnection(): Promise<boolean> {
-    try {
-        const client = getSDKClient();
-        // Use a lightweight call available in current SDK build (fallback)
-        await client.precheckRequest({
-            tool: 'health.check',
-            scope: 'net.external',
-            raw_text: 'ping',
-          } as any, 'health-user');
-        return true;
-    } catch (error) {
-        console.error('SDK connection test failed:', error);
-        return false;
-    }
 }
 
 // Search memory context using SDK
@@ -78,10 +47,10 @@ export async function searchMemoryContext(query: string, userId: string, limit: 
 export async function getRecentMemoryContext(userId: string, limit: number = 3): Promise<any[]> {
     try {
         const client = getSDKClient();
-        
-        // Use SDK getRecentContext method
         const anyClient = client as any;
-        const results = await anyClient.getRecentContext({
+        // Some SDK versions expose only searchContext; use a wildcard query to fetch recent
+        const results = await anyClient.searchContext({
+            query: '*',
             userId,
             limit,
             scope: 'user',

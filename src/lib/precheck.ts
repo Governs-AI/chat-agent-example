@@ -1,6 +1,5 @@
 import { Message, PrecheckRequest, PrecheckResponse } from './types';
-import { getPrecheckUserIdDetails } from './utils';
-import { getSDKClient, getSDKClientForUser } from './sdk-client';
+import { getSDKClient } from './sdk-client';
 import { GovernsAIError, PrecheckError as SDKPrecheckError, PrecheckRequest as SDKPrecheckRequest, PrecheckResponse as SDKPrecheckResponse } from '@governs-ai/sdk';
 
 export class PrecheckError extends Error {
@@ -15,11 +14,10 @@ export class PrecheckError extends Error {
 }
 
 // Helper function to fetch budget context using SDK
-export async function fetchBudgetContext(apiKey?: string): Promise<any> {
+export async function fetchBudgetContext(userId?: string): Promise<any> {
   try {
     const client = getSDKClient();
-    const { userId } = getPrecheckUserIdDetails();
-    const budgetContext = await client.getBudgetContext(userId);
+    const budgetContext = await client.getBudgetContext(userId || '');
     return budgetContext;
   } catch (error) {
     console.warn('Error fetching budget context via SDK, using mock data for testing:', error);
@@ -37,13 +35,11 @@ export async function fetchBudgetContext(apiKey?: string): Promise<any> {
 
 export async function precheck(
   input: PrecheckRequest,
-  userId?: string,
-  apiKey?: string
+  userId: string
 ): Promise<PrecheckResponse> {
   try {
     // Use SDK client for precheck
-    const client = userId ? getSDKClientForUser(userId, apiKey) : getSDKClient();
-    const finalUserId = userId || getPrecheckUserIdDetails().userId;
+    const client = getSDKClient();
 
     // Convert local types to SDK types
     const sdkRequest: SDKPrecheckRequest = {
@@ -53,23 +49,11 @@ export async function precheck(
       payload: input.payload,
       tags: input.tags,
       corr_id: input.corr_id,
-      policy_config: input.policy_config as any, // Type assertion for compatibility
-      tool_config: input.tool_config as any, // Type assertion for compatibility
-      budget_context: input.budget_context,
     };
 
-    const sdkResponse = await client.precheckRequest(sdkRequest, finalUserId);
+    const sdkResponse = await client.precheck(sdkRequest, userId);
 
-    // Convert SDK response back to local types
-    const response: PrecheckResponse = {
-      decision: sdkResponse.decision as any, // Type assertion for compatibility
-      content: sdkResponse.content,
-      reasons: sdkResponse.reasons,
-      pii_findings: sdkResponse.pii_findings,
-      metadata: sdkResponse.metadata,
-    };
-
-    return response;
+    return sdkResponse as unknown as PrecheckResponse;
   } catch (error) {
     // Handle SDK errors
     if (error instanceof SDKPrecheckError) {
@@ -170,7 +154,7 @@ export function createMCPPrecheckRequest(
   // Create a raw_text representation of the MCP call for precheck
   // const rawText = `MCP Tool Call: ${tool} with arguments: ${JSON.stringify(args)}`;
   const rawText = lastMessage?.content || '';
-  
+
   // Extract purchase amount from args for payment tools
   let enhancedToolConfig = { ...toolConfig };
   if (tool === 'payment_process' && args.amount) {

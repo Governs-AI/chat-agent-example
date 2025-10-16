@@ -1,15 +1,9 @@
 import { PolicyConfig, ToolConfigMetadata } from './types';
-import { getPrecheckUserIdDetails } from './utils';
+import { getPrecheckApiKey } from './utils';
 import { getSDKClient } from './sdk-client';
 
 // Platform API configuration
 const PLATFORM_BASE_URL = process.env.PLATFORM_URL || 'http://localhost:3002';
-
-// Use PRECHECK_API_KEY for platform authentication (same key for both services)
-const getApiKey = () => {
-  const { apiKey } = getPrecheckUserIdDetails();
-  return apiKey;
-};
 
 export interface PlatformPolicyResponse {
   policy: PolicyConfig | null;
@@ -34,21 +28,24 @@ export async function fetchPoliciesFromPlatform(): Promise<PlatformPolicyRespons
     
     // Use SDK getPolicies method
     const anyClient = client as any;
-    const policies = await anyClient.getPolicies();
-    
+    let policies = await anyClient.getPolicies();
+
+    policies = policies.policies[0];
+    console.log('🧠 Policies:', policies);
     // Warn if no policy found - this should be configured in the platform
-    if (!policies?.policy) {
+    if (!policies) {
       console.error('❌ No policy found in platform database!');
       console.error('   Please create a policy in the platform UI or run: pnpm db:seed');
       console.error('   Blocking all requests for security.');
     }
     
     return {
-      policy: policies?.policy || null,
-      toolMetadata: policies?.toolMetadata || {},
-      orgId: policies?.orgId,
+      policy: policies || null,
+      toolMetadata: policies.toolMetadata || {},
+      orgId: policies.orgId,
     };
   } catch (error) {
+    console.log('🧠 Error:', error);
     console.error('❌ Platform API (SDK) not available - BLOCKING all requests for security');
     if (error instanceof Error) {
       console.error('   Error details:', error.message);
@@ -64,7 +61,7 @@ export async function fetchPoliciesFromPlatform(): Promise<PlatformPolicyRespons
 // Register tools used by this agent (with full metadata)
 export async function registerAgentTools(tools: string[]): Promise<AgentToolsResponse | null> {
   try {
-    const { userId, apiKey } = getPrecheckUserIdDetails();
+    const apiKey = getPrecheckApiKey();
 
     const response = await fetch(`${PLATFORM_BASE_URL}/api/agents/tools`, {
       method: 'POST',
@@ -73,8 +70,7 @@ export async function registerAgentTools(tools: string[]): Promise<AgentToolsRes
       },
       body: JSON.stringify({
         agentId: 'demo-chat-agent',
-        userId: userId,
-        apiKey: apiKey,
+        apiKey: apiKey || '',
         tools,
         metadata: {
           version: '1.0.0',
@@ -125,7 +121,7 @@ export async function registerToolsWithMetadata(toolDefinitions: any[]): Promise
 
     // Use SDK registerTools method
     const anyClient = client as any;
-    const result = await anyClient.registerTools(toolsToRegister as any, getPrecheckUserIdDetails().userId);
+    const result = await anyClient.registerTools(toolsToRegister as any, getPrecheckApiKey());
     console.log('✅ Tools registered with platform via SDK:', result);
     return result;
   } catch (error) {

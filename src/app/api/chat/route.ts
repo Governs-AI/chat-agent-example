@@ -6,8 +6,8 @@ import { OllamaProvider } from '@/lib/providers/ollama';
 import { SSEWriter } from '@/lib/sse';
 import { ChatRequest, Provider, Message, ToolCall } from '@/lib/types';
 import { AVAILABLE_TOOLS } from '@/lib/tools';
-import { getToolMetadata } from '@/lib/tool-metadata';
-import { fetchPoliciesFromPlatform, registerAgentTools, registerToolsWithMetadata, getToolMetadataFromPlatform } from '@/lib/platform-api';
+import { } from '@/lib/tool-metadata';
+import { } from '@/lib/platform-api';
 import { getSDKClient, searchMemoryContext, getRecentMemoryContext } from '@/lib/sdk-client';
 import { auth } from '@/lib/auth';
 
@@ -47,34 +47,12 @@ async function recordUsage(
 }
 
 // Helper function to execute tool calls
-async function executeToolCall(toolCall: ToolCall, writer: SSEWriter, userId?: string, apiKey?: string, platformToolMetadata?: Record<string, any>, skipPrecheck: boolean = false, lastMessage?: Message) {
+async function executeToolCall(toolCall: ToolCall, writer: SSEWriter, userId?: string, apiKey?: string, _platformToolMetadata?: Record<string, any>, skipPrecheck: boolean = false, lastMessage?: Message) {
   try {
     console.log('Executing tool call:', toolCall.function.name, 'with args:', toolCall.function.arguments);
 
     // Parse tool arguments
     const args = JSON.parse(toolCall.function.arguments);
-
-    // Get tool metadata from platform or fallback to local
-    const toolMetadata = platformToolMetadata ?
-      getToolMetadataFromPlatform(toolCall.function.name, platformToolMetadata) || getToolMetadata(toolCall.function.name) :
-      getToolMetadata(toolCall.function.name);
-
-    // Fetch current policy from platform
-    const platformData = await fetchPoliciesFromPlatform();
-
-    // If no policy found, block the tool call
-    if (!platformData.policy) {
-      writer.writeToolResult({
-        tool_call_id: toolCall.id,
-        success: false,
-        error: 'No governance policy configured. Tool calls blocked.',
-        decision: 'block',
-        reasons: ['No policy found in platform'],
-      });
-      return;
-    }
-
-    const policy = platformData.policy;
 
     // Create MCP precheck request for the tool call with policy and tool config
     let precheckResponse;
@@ -87,20 +65,17 @@ async function executeToolCall(toolCall: ToolCall, writer: SSEWriter, userId?: s
         content: { args }
       };
     } else {
-      // Fetch budget context for budget-aware precheck
-      const budgetContext = await fetchBudgetContext(apiKey);
-
       const precheckRequest = createMCPPrecheckRequest(
         toolCall.function.name,
         args,
         uuidv4(),
-        policy,
-        toolMetadata,
-        budgetContext, // ← Pass budget context
+        undefined,
+        undefined,
+        undefined,
         lastMessage
       );
 
-      precheckResponse = await precheck(precheckRequest, userId, apiKey);
+      precheckResponse = await precheck(precheckRequest, userId || '');
     }
 
 
@@ -108,7 +83,7 @@ async function executeToolCall(toolCall: ToolCall, writer: SSEWriter, userId?: s
     writer.writeDecision(precheckResponse.decision, precheckResponse.reasons);
 
     // Handle precheck decision
-    if (precheckResponse.decision === 'block') {
+    if (precheckResponse.decision === 'block' || precheckResponse.decision === 'deny') {
       console.log(`❌ TOOL CALL BLOCKED: ${toolCall.function.name}`);
 
       // Clean up the error message to be more user-friendly
@@ -247,7 +222,7 @@ export async function POST(request: NextRequest) {
 
     // Extract user context from session
     const user = session.user as any;
-    const userId = user.governs_user_id || user.id;
+    const userId = (user.governs_user_id || user.id || '') as string;
     const orgId = user.org_id;
     const apiKey = process.env.PRECHECK_API_KEY; // Use server-side API key
 
@@ -280,36 +255,12 @@ export async function POST(request: NextRequest) {
     // Handle the streaming in the background
     (async () => {
       try {
-        // Step 1: Fetch policies and tool metadata from platform
-        const platformData = await fetchPoliciesFromPlatform();
-        const platformToolMetadata = platformData.toolMetadata || {};
+        // Step 1: Rely on SDK to enrich precheck (policy/tool metadata/budget)
+        const finalOrgId = orgId || 'cmg83v4ki00005q6app5ouwrw';
 
-        // If no policy found, block the request for security
-        if (!platformData.policy) {
-          writer.writeError(
-            'No governance policy configured. Please configure a policy in the platform or run the database seed script.'
-          );
-          writer.close();
-          return;
-        }
+        // Tool registration removed per latest integration guidelines
 
-        const policy = platformData.policy;
-        // Use org_id from authenticated session, fallback to platform data or seeded org
-        const finalOrgId = orgId || platformData.orgId || 'cmg83v4ki00005q6app5ouwrw';
-
-        console.log('Session orgId:', orgId);
-        console.log('Platform data orgId:', platformData.orgId);
-        console.log('Using orgId for usage recording:', finalOrgId);
-
-        // Register this agent's tools with the platform (with full metadata for auto-discovery)
-        await registerToolsWithMetadata(AVAILABLE_TOOLS);
-
-        // Also register tool names for tracking
-        const toolNames = AVAILABLE_TOOLS.map(tool => tool.function.name);
-        await registerAgentTools(toolNames);
-
-        // Step 2: Precheck with user context, policy, and tool metadata
-        const chatToolMetadata = getToolMetadataFromPlatform('model.chat', platformToolMetadata) || getToolMetadata('model.chat');
+        // Step 2: Build minimal precheck request (SDK will enrich)
 
         // Check if this is a confirmation approved continuation
         const lastMessage = messages[messages.length - 1];
@@ -339,18 +290,16 @@ export async function POST(request: NextRequest) {
           const precheckRequest = createChatPrecheckRequest(
             messages,
             provider,
-            corrId,
-            policy,
-            chatToolMetadata
+            corrId
           );
 
-          precheckResponse = await precheck(precheckRequest, userId, apiKey);
+          precheckResponse = await precheck(precheckRequest, userId);
         }
         // Send decision event
         writer.writeDecision(precheckResponse.decision, precheckResponse.reasons);
 
         // Step 2: Handle precheck decision
-        if (precheckResponse.decision === 'block') {
+        if (precheckResponse.decision === 'block' || precheckResponse.decision === 'deny') {
           console.log('❌ REQUEST BLOCKED BY PRECHECK');
           writer.writeError(
             `Request blocked: ${precheckResponse.reasons?.join(', ') || 'Policy violation'}`
@@ -364,37 +313,8 @@ export async function POST(request: NextRequest) {
           console.log('⏸️  CHAT REQUEST REQUIRES CONFIRMATION');
 
           // Create pending confirmation via platform API
-          const platformUrl = process.env.NEXT_PUBLIC_PLATFORM_URL || 'http://localhost:3002';
-          const confirmationResponse = await fetch(`${platformUrl}/api/v1/confirmation/create`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Governs-Key': apiKey || '',
-            },
-            body: JSON.stringify({
-              correlationId: corrId,
-              requestType: 'chat',
-              requestDesc: `Chat request with ${messages.length} message(s)`,
-              requestPayload: {
-                messages: messages.slice(-3), // Only send last 3 messages for context
-                provider,
-              },
-              decision: precheckResponse.decision,
-              reasons: precheckResponse.reasons,
-            }),
-          });
-
-          if (!confirmationResponse.ok) {
-            writer.writeError('Failed to create confirmation request');
-            writer.close();
-            return;
-          }
-
-          const confirmationData = await confirmationResponse.json();
-
           writer.writeError(
-            `Confirmation required: ${precheckResponse.reasons?.join(', ') || 'User confirmation needed'}\n\n` +
-            `Please visit: ${platformUrl}/confirm/${confirmationData.confirmation.correlationId}`
+            `Confirmation required: ${precheckResponse.reasons?.join(', ') || 'User confirmation needed'}`
           );
           writer.close();
           return;
@@ -507,7 +427,7 @@ Note: Do not use tools for general questions or chats.${memoryContext}`,
               // Execute the tool call with platform metadata
               // Skip precheck if this is a confirmation approved continuation
               const skipPrecheck = confirmationApprovedMatch !== null;
-              await executeToolCall(toolCall, writer, userId, apiKey, platformToolMetadata, skipPrecheck, lastMessage);
+              await executeToolCall(toolCall, writer, userId, apiKey, undefined, skipPrecheck, lastMessage);
             } else if (chunk.type === 'usage') {
               // Capture usage data for recording
               usageData = {

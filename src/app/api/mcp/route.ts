@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
     const precheckRequest = createMCPPrecheckRequest(tool, args || {}, corrId, undefined, undefined, budgetContext);
 
     try {
-      const precheckResponse = await precheck(precheckRequest, userId, apiKey);
+      const precheckResponse = await precheck(precheckRequest, userId);
 
       // Step 2: Handle precheck decision
       if (precheckResponse.decision === 'block') {

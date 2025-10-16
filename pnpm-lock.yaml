@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@governs-ai/sdk':
-        specifier: ^1.0.0-alpha.2
-        version: 1.0.0-alpha.2(typescript@5.9.3)
+        specifier: 1.0.0-alpha.10
+        version: 1.0.0-alpha.10(typescript@5.9.3)
       '@mendable/firecrawl-js':
         specifier: ^4.3.6
         version: 4.3.7
@@ -114,8 +114,8 @@ packages:
     resolution: {integrity: sha512-d9zaMRSTIKDLhctzH12MtXvJKSSUhaHcjV+2Z+GK+EEY7XKpP5yR4x+N3TAcHTcu963nIr+TMcCb4DBCYX1z6Q==}
     engines: {node: ^12.22.0 || ^14.17.0 || >=16.0.0}
 
-  '@governs-ai/sdk@1.0.0-alpha.2':
-    resolution: {integrity: sha512-QM7SAwHbtweqFsuz676GR69oHtFtP+8ppNgW1snu6DzVzOIQwgUK1ZLYNMQ5kaSMSJOT7Tr/j6kRzc+6/aO+gA==}
+  '@governs-ai/sdk@1.0.0-alpha.10':
+    resolution: {integrity: sha512-3Zt3NIM4FEz1jQXHRsMPOsen7s8nAKAbqbJ2Hw+14y/7uBmoaFCtaa2f2xCuMHZV49tJBpE4dufdsJZ61Ss2Nw==}
     engines: {node: '>=16.0.0'}
     peerDependencies:
       typescript: '>=4.5.0'
@@ -2011,7 +2011,7 @@ snapshots:
 
   '@eslint/js@8.57.1': {}
 
-  '@governs-ai/sdk@1.0.0-alpha.2(typescript@5.9.3)':
+  '@governs-ai/sdk@1.0.0-alpha.10(typescript@5.9.3)':
     dependencies:
       typescript: 5.9.3
       uuid: 9.0.1

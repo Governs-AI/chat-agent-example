@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { MCPResponse } from '@/lib/types';
 import DecisionBadge from './DecisionBadge';
-import { getPrecheckUserIdDetails } from '@/lib/utils';
+import { getPrecheckApiKey } from '@/lib/utils';
 
 interface Tool {
   name: string;
@@ -45,7 +45,7 @@ export default function MCPToolTester() {
     setResponse(null);
 
     try {
-      const { userId, apiKey } = getPrecheckUserIdDetails();
+      const apiKey = getPrecheckApiKey();
 
       // Validate JSON args
       let parsedArgs;
@@ -68,8 +68,7 @@ export default function MCPToolTester() {
         body: JSON.stringify({
           tool: selectedTool,
           args: parsedArgs,
-          userId,
-          apiKey,
+          apiKey: apiKey || '',
         }),
       });
 
