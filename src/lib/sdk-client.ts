@@ -24,40 +24,38 @@ export function getSDKClient(): GovernsAIClient {
 }
 
 // Search memory context using SDK
-export async function searchMemoryContext(query: string, userId: string, limit: number = 5): Promise<any[]> {
+export async function searchMemoryContext(query: string, _userId: string, limit: number = 5): Promise<any> {
     try {
         const client = getSDKClient();
         
-        // Use SDK searchContext method
+        // Use SDK LLM-optimized search
         const anyClient = client as any;
-        const results = await anyClient.searchContext({
+        const results = await anyClient.searchContextLLM({
             query,
-            userId,
             limit,
             scope: 'user',
         });
-        return results || [];
+        return results;
     } catch (error) {
         console.warn('Memory search error:', error);
-        return [];
+        return { success: false, context: '', memoryCount: 0 };
     }
 }
 
 // Get recent memory context
-export async function getRecentMemoryContext(userId: string, limit: number = 3): Promise<any[]> {
+export async function getRecentMemoryContext(_userId: string, limit: number = 3): Promise<any> {
     try {
         const client = getSDKClient();
         const anyClient = client as any;
-        // Some SDK versions expose only searchContext; use a wildcard query to fetch recent
-        const results = await anyClient.searchContext({
+        // Use a wildcard query for recent in LLM format
+        const results = await anyClient.searchContextLLM({
             query: '*',
-            userId,
             limit,
             scope: 'user',
         });
-        return results || [];
+        return results;
     } catch (error) {
         console.warn('Recent memory error:', error);
-        return [];
+        return { success: false, context: '', memoryCount: 0 };
     }
 }

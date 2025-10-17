@@ -347,7 +347,7 @@ export async function POST(request: NextRequest) {
         // Use possibly redacted messages from precheck response
         const processedMessages = precheckResponse.content?.messages || messages;
 
-        // Search for relevant memory context before sending to AI
+        // Search for relevant memory context before sending to AI (LLM-compressed)
         let memoryContext = '';
         try {
           const lastUserMessage = processedMessages
@@ -355,20 +355,17 @@ export async function POST(request: NextRequest) {
             .slice(-1)[0];
           
           if (lastUserMessage?.content) {
-            // Search for relevant memories
-            const searchResults = await searchMemoryContext(lastUserMessage.content, userId, 3);
-            
-            // Also get recent memories
-            const recentResults = await getRecentMemoryContext(userId, 2);
-            
-            // Combine and format memory context
-            const allMemories = [...searchResults, ...recentResults];
+            // LLM-optimized memory search
+            const search = await searchMemoryContext(lastUserMessage.content, userId, 5);
+            const recent = await getRecentMemoryContext(userId, 3);
 
-            console.log('🧠 All memories:', allMemories);
-            if (allMemories.length > 0) {
-              memoryContext = '\n\nRelevant memories:\n' + 
-                allMemories.map((mem, i) => `${i + 1}. ${mem.content}`).join('\n');
-              console.log('🧠 Found memory context:', allMemories.length, 'items');
+            console.log('Search:', search);
+            console.log('Recent:', recent);
+            const contexts: string[] = [];
+            if (search?.success && search?.context) contexts.push(search.context);
+            if (recent?.success && recent?.context) contexts.push(recent.context);
+            if (contexts.length > 0) {
+              memoryContext = `\n\nContext memory (summarized):\n${contexts.join('\n')}`;
             }
           }
         } catch (error) {

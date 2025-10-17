@@ -10,7 +10,7 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@governs-ai/sdk": "1.0.0-alpha.10",
+    "@governs-ai/sdk": "1.0.0-alpha.12",
     "@mendable/firecrawl-js": "^4.3.6",
     "@simplewebauthn/browser": "^13.2.0",
     "autoprefixer": "^10.4.21",

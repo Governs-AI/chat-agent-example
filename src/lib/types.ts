@@ -75,6 +75,12 @@ export interface PrecheckResponse {
   reasons?: string[];
   pii_findings?: any[];
   metadata?: Record<string, any>;
+  // SDK spec additions for memory save intent
+  intent?: { save?: boolean };
+  suggestedActions?: Array<
+    | { type: 'context.save'; content?: string; reason?: string; metadata?: Record<string, any> }
+    | { type: string; [k: string]: any }
+  >;
 }
 
 export interface ChatRequest {
