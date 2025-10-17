@@ -11,6 +11,28 @@ import { } from '@/lib/platform-api';
 import { getSDKClient, searchMemoryContext, getRecentMemoryContext } from '@/lib/sdk-client';
 import { auth } from '@/lib/auth';
 
+// Intent detector to decide which tools (if any) should be enabled
+function detectToolIntent(userText: string): string[] {
+  const text = (userText || '').toLowerCase();
+  const wantsWeather = /(weather|temperature|forecast|rain|snow|wind|humidity)/.test(text);
+  const wantsWeb = /(search|google|lookup|web|scrape|crawl)/.test(text);
+  const wantsFile = /(read file|write file|save to file|open file|file\s+(read|write|list))/.test(text);
+  const wantsDb = /(query|database|sql|select|insert|update|delete)\b/.test(text);
+  const wantsPayment = /(pay|payment|charge|refund|checkout|transaction)/.test(text);
+  const wantsEmail = /(send email|email to|compose email)/.test(text);
+  const wantsCalendar = /(calendar|schedule|event|meeting)/.test(text);
+
+  const toolNames: string[] = [];
+  if (wantsWeather) toolNames.push('weather_current', 'weather_forecast');
+  if (wantsWeb) toolNames.push('web_search', 'web_scrape');
+  if (wantsFile) toolNames.push('file_read', 'file_write', 'file_list');
+  if (wantsDb) toolNames.push('db_query');
+  if (wantsPayment) toolNames.push('payment_process', 'payment_refund');
+  if (wantsEmail) toolNames.push('email_send');
+  if (wantsCalendar) toolNames.push('calendar_create_event');
+  return toolNames;
+}
+
 // Helper function to record usage after AI call using SDK
 async function recordUsage(
   userId: string,
@@ -384,36 +406,18 @@ export async function POST(request: NextRequest) {
         } | null = null;
 
         try {
-          // Enable tools for both OpenAI and Ollama providers
-          // Filter out KV tools to prevent accidental memory writes in normal chat
-          const tools = AVAILABLE_TOOLS.filter(tool => 
-            !tool.function.name.startsWith('kv_')
-          );
+          // Disable tools by default. Enable only when clear intent is detected.
+          const lastUserMsg = processedMessages.filter(m => m.role === 'user').slice(-1)[0]?.content || '';
+          const intendedToolNames = detectToolIntent(lastUserMsg);
+          const tools = AVAILABLE_TOOLS.filter(t => intendedToolNames.includes(t.function.name));
 
-          // Add system message with tool information for both providers
-          if (tools) {
-            const systemMessage: Message = {
-              id: uuidv4(),
-              role: 'system',
-              content: `You are a helpful AI assistant with access to tools.
-
-RULES:
-- For simple greetings, jokes, or general questions: Answer directly without tools
-- For weather requests: Use weather_current or weather_forecast with coordinates
-- For other specific tasks: Use the appropriate tool
-
-Common coordinates:
-- New Delhi: 28.6139, 77.2090
-- London: 51.5074, -0.1278  
-- Tokyo: 35.6762, 139.6503
-- Berlin: 52.5200, 13.4050
-
-When using tools, make the tool call directly. Don't explain beforehand.
-
-Note: Do not use tools for general questions or chats.${memoryContext}`,
-            };
-            processedMessages.unshift(systemMessage);
-          }
+          // Add a concise system message emphasizing tool restraint
+          const systemMessage: Message = {
+            id: uuidv4(),
+            role: 'system',
+            content: `You are a helpful assistant. Do NOT use tools unless strictly necessary to answer correctly. Prefer direct answers using your own knowledge. If a tool is required (e.g., weather, web search, file ops, payments, db, email, calendar), call exactly one appropriate tool with minimal parameters, otherwise answer directly.${memoryContext}`,
+          };
+          processedMessages.unshift(systemMessage);
 
           for await (const chunk of chatProvider.stream(processedMessages, modelToUse, tools)) {
             if (chunk.type === 'content') {
