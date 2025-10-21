@@ -1,5 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+    output: 'standalone',
     env: {
       PROVIDER: process.env.PROVIDER,
       PRECHECK_URL: process.env.PRECHECK_URL,
