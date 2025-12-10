@@ -55,6 +55,7 @@ USER nextjs
 # Expose port
 EXPOSE 3000
 ENV PORT=3000
+ENV NEXTAUTH_URL=https://chat.governsai.com
 
 # Health check (Adjusted for standard start)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
