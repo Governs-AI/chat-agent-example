@@ -11,7 +11,7 @@ export const {
       id: "governsai",
       name: "GovernsAI",
       type: "oidc",
-      issuer: "https://keycloak-production-31b9.up.railway.app/realms/governs-ai-prod",
+      issuer: process.env.GOVERNSAI_ISSUER,
       clientId: process.env.GOVERNSAI_CLIENT_ID,
       clientSecret: process.env.GOVERNSAI_CLIENT_SECRET,
       authorization: {
