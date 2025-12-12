@@ -3,7 +3,6 @@
 import { useState, useEffect } from 'react';
 import { MCPResponse } from '@/lib/types';
 import DecisionBadge from './DecisionBadge';
-import { getPrecheckApiKey } from '@/lib/utils';
 
 interface Tool {
   name: string;
@@ -45,8 +44,6 @@ export default function MCPToolTester() {
     setResponse(null);
 
     try {
-      const apiKey = getPrecheckApiKey();
-
       // Validate JSON args
       let parsedArgs;
       try {
@@ -68,7 +65,6 @@ export default function MCPToolTester() {
         body: JSON.stringify({
           tool: selectedTool,
           args: parsedArgs,
-          apiKey: apiKey || '',
         }),
       });
 
@@ -154,22 +150,22 @@ export default function MCPToolTester() {
     setResponse(null);
   };
 
-  if (!isExpanded) {
-    return (
-      <div className="border-t border-gray-200 p-4">
-        <button
-          onClick={() => setIsExpanded(true)}
-          className="flex items-center gap-2 text-sm text-blue-600 hover:text-blue-800 transition-colors"
-        >
-          <span>🔧</span>
-          <span>Test MCP Tools Directly</span>
-          <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
-            {tools.length} tools available
-          </span>
-        </button>
-      </div>
-    );
-  }
+  // if (!isExpanded) {
+  //   return (
+  //     <div className="border-t border-gray-200 p-4">
+  //       <button
+  //         onClick={() => setIsExpanded(true)}
+  //         className="flex items-center gap-2 text-sm text-blue-600 hover:text-blue-800 transition-colors"
+  //       >
+  //         <span>🔧</span>
+  //         <span>Test MCP Tools Directly</span>
+  //         <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
+  //           {tools.length} tools available
+  //         </span>
+  //       </button>
+  //     </div>
+  //   );
+  // }
 
   return (
     <div className="border-t border-gray-200 p-4 bg-gray-50">

@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { Message, PrecheckRequest, PrecheckResponse } from './types';
 import { getSDKClient } from './sdk-client';
 import { GovernsAIError, PrecheckError as SDKPrecheckError, PrecheckRequest as SDKPrecheckRequest, PrecheckResponse as SDKPrecheckResponse } from '@governs-ai/sdk';
@@ -14,11 +15,21 @@ export class PrecheckError extends Error {
 }
 
 // Helper function to fetch budget context using SDK
-export async function fetchBudgetContext(userId?: string): Promise<any> {
+export async function fetchBudgetContext(userId?: string, orgId?: string): Promise<any> {
   try {
     const client = getSDKClient();
     const budgetContext = await client.getBudgetContext(userId || '');
-    return budgetContext;
+    const apiKey = process.env.PRECHECK_API_KEY;
+    const apiKeyHash = apiKey ? createHash('sha256').update(apiKey).digest('hex') : undefined;
+
+    return {
+      ...budgetContext,
+      subject: {
+        user_id: userId,
+        org_id: orgId,
+        api_key_hash: apiKeyHash,
+      },
+    };
   } catch (error) {
     console.warn('Error fetching budget context via SDK, using mock data for testing:', error);
     // Return mock budget context for testing
@@ -28,7 +39,12 @@ export async function fetchBudgetContext(userId?: string): Promise<any> {
       llm_spend: 0.00,
       purchase_spend: 0.00,
       remaining_budget: 1000.00,
-      budget_type: 'user'
+      budget_type: 'user',
+      subject: {
+        user_id: userId,
+        org_id: orgId,
+        api_key_hash: 'mock',
+      }
     };
   }
 }
@@ -40,7 +56,7 @@ export async function precheck(
   try {
     // Use SDK client for precheck
     const client = getSDKClient();
-
+    console.log('SDK client:', client);
     // Convert local types to SDK types
     const sdkRequest: SDKPrecheckRequest = {
       tool: input.tool,
@@ -49,12 +65,17 @@ export async function precheck(
       payload: input.payload,
       tags: input.tags,
       corr_id: input.corr_id,
+      policy_config: input.policy_config,
+      tool_config: input.tool_config,
+      budget_context: input.budget_context,
     };
 
+    console.log('SDK request:', sdkRequest);
     const sdkResponse = await client.precheck(sdkRequest, userId);
 
     return sdkResponse as unknown as PrecheckResponse;
   } catch (error) {
+    console.error('Precheck error:', error);
     // Handle SDK errors
     if (error instanceof SDKPrecheckError) {
       console.error('⛔ SDK Precheck failed:', error.message);

@@ -20,7 +20,7 @@ export async function POST(request: NextRequest) {
     // Extract user context from session
     const user = session.user as any;
     const userId = user.governs_user_id || user.id;
-    const apiKey = process.env.PRECHECK_API_KEY; // Use server-side API key
+    const orgId = user.org_id;
 
     const body: MCPRequest = await request.json();
     const { tool, args } = body;
@@ -35,7 +35,7 @@ export async function POST(request: NextRequest) {
     const corrId = uuidv4();
 
     // Step 1: Fetch budget context and precheck the MCP call
-    const budgetContext = await fetchBudgetContext(apiKey);
+    const budgetContext = await fetchBudgetContext(userId, orgId);
 
     const precheckRequest = createMCPPrecheckRequest(tool, args || {}, corrId, undefined, undefined, budgetContext);
 

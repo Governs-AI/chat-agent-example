@@ -137,10 +137,21 @@ export default function Chat() {
       if (!originalMessage) return;
 
       // Get the last user message before the confirmation
-      const userMessageIndex = messages.findIndex(msg => msg.role === 'user');
-      if (userMessageIndex === -1) return;
+      const originalIndex = messages.findIndex(msg => msg.correlationId === correlationId);
+      if (originalIndex === -1) return;
 
-      const userMessage = messages[userMessageIndex];
+      let userMessage: MessageType | undefined;
+      for (let i = originalIndex - 1; i >= 0; i--) {
+        if (messages[i].role === 'user') {
+          userMessage = messages[i];
+          break;
+        }
+      }
+
+      if (!userMessage) {
+        userMessage = [...messages].reverse().find(msg => msg.role === 'user');
+      }
+      if (!userMessage) return;
       
       // Create a new assistant message to show the resumed response
       const resumedAssistantMessage: MessageType = {
@@ -538,12 +549,11 @@ export default function Chat() {
   };
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="flex-shrink-0 border-b border-gray-200 p-4">
+    <div className="flex flex-col h-full overflow-hidden">
+      <div className="sticky top-0 z-10 flex-shrink-0 border-b border-gray-200 bg-white p-4">
         <div className="flex items-center justify-between">
           <h1 className="text-xl font-semibold text-gray-900">
-            Demo Chat
+            GovernsAI - Demo Chat
           </h1>
           <ProviderSwitch 
             provider={provider} 
@@ -570,8 +580,8 @@ export default function Chat() {
         </div>
       </div>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      {/* Messages - Scrollable */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0">
         {messages.length === 0 ? (
           <div className="text-center text-gray-500 mt-8">
             <p className="text-lg mb-2">Welcome to GovernsAI Demo Chat!</p>
@@ -633,7 +643,7 @@ export default function Chat() {
       </div>
 
       {/* MCP Tool Tester */}
-      <MCPToolTester />
+      {/* <MCPToolTester /> */}
     </div>
   );
 }

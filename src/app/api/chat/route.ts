@@ -69,7 +69,16 @@ async function recordUsage(
 }
 
 // Helper function to execute tool calls
-async function executeToolCall(toolCall: ToolCall, writer: SSEWriter, userId?: string, apiKey?: string, _platformToolMetadata?: Record<string, any>, skipPrecheck: boolean = false, lastMessage?: Message) {
+async function executeToolCall(
+  toolCall: ToolCall,
+  writer: SSEWriter,
+  userId?: string,
+  apiKey?: string,
+  _platformToolMetadata?: Record<string, any>,
+  budgetContext?: any,
+  skipPrecheck: boolean = false,
+  lastMessage?: Message
+) {
   try {
     console.log('Executing tool call:', toolCall.function.name, 'with args:', toolCall.function.arguments);
 
@@ -93,7 +102,7 @@ async function executeToolCall(toolCall: ToolCall, writer: SSEWriter, userId?: s
         uuidv4(),
         undefined,
         undefined,
-        undefined,
+        budgetContext,
         lastMessage
       );
 
@@ -279,6 +288,7 @@ export async function POST(request: NextRequest) {
       try {
         // Step 1: Rely on SDK to enrich precheck (policy/tool metadata/budget)
         const finalOrgId = orgId || 'cmg83v4ki00005q6app5ouwrw';
+        const budgetContext = await fetchBudgetContext(userId, finalOrgId);
 
         // Tool registration removed per latest integration guidelines
 
@@ -314,6 +324,7 @@ export async function POST(request: NextRequest) {
             provider,
             corrId
           );
+          precheckRequest.budget_context = budgetContext;
 
           precheckResponse = await precheck(precheckRequest, userId);
         }
@@ -428,7 +439,16 @@ export async function POST(request: NextRequest) {
               // Execute the tool call with platform metadata
               // Skip precheck if this is a confirmation approved continuation
               const skipPrecheck = confirmationApprovedMatch !== null;
-              await executeToolCall(toolCall, writer, userId, apiKey, undefined, skipPrecheck, lastMessage);
+              await executeToolCall(
+                toolCall,
+                writer,
+                userId,
+                apiKey,
+                undefined,
+                budgetContext,
+                skipPrecheck,
+                lastMessage
+              );
             } else if (chunk.type === 'usage') {
               // Capture usage data for recording
               usageData = {
