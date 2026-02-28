@@ -7,10 +7,12 @@ A minimal, production-lean demo chat application that demonstrates the precheck-
 - **GovernsAI Authentication**: Secure login with GovernsAI OIDC provider
 - **User Context**: Organization-based access control and personalized experience
 - **Precheck Integration**: Every chat message and tool call is automatically checked against governance policies
+- **Governance Command Center UI**: Live decision counters (allow/redact/confirm/block) and coverage tracking
 - **Multi-Provider Support**: Switch between OpenAI and Ollama (local) providers
 - **Real-time Streaming**: Server-sent events for responsive chat experience
 - **Decision Visualization**: See policy decisions (allow, redact, block, confirm) in real-time
 - **MCP Tool Demos**: Mock Model Context Protocol tool calls with governance
+- **Advanced Enterprise Demo**: Dedicated `/advanced-demo` route + scenario simulator for product demos
 
 ## Policy Decisions
 
@@ -88,6 +90,14 @@ The app demonstrates four types of governance decisions:
 5. **Open your browser** to `http://localhost:3000`
 
 You will be redirected to the login page. Click "Login with GovernsAI" to authenticate.
+
+### Advanced Demo Routes & Assets
+
+- **Advanced landing page**: `http://localhost:3000/advanced-demo`
+- **Scenario simulator script**:
+  ```bash
+  node examples/advanced-governance-simulator/run-demo.mjs
+  ```
 
 ## Authentication
 
