@@ -1,59 +1,85 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import Link from 'next/link';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import { useSession } from 'next-auth/react';
 import { Message as MessageType, Provider, StreamEvent, Decision, isValidDecision } from '@/lib/types';
 import Message from './Message';
 import ProviderSwitch from './ProviderSwitch';
-import MCPToolTester from './MCPToolTester';
+
+interface ExamplePrompt {
+  label: string;
+  text: string;
+  description: string;
+  expectedDecision: Decision;
+}
+
+function normalizeDecision(decision?: Decision): Decision | null {
+  if (!decision) return null;
+  return decision === 'deny' ? 'block' : decision;
+}
+
+const decisionBadgeStyle: Record<Decision, string> = {
+  allow: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+  redact: 'bg-amber-100 text-amber-800 border-amber-200',
+  confirm: 'bg-sky-100 text-sky-800 border-sky-200',
+  block: 'bg-rose-100 text-rose-800 border-rose-200',
+  deny: 'bg-rose-100 text-rose-800 border-rose-200',
+};
 
 // Example prompts to demonstrate different precheck behaviors and MCP tools
-const examplePrompts = [
+const examplePrompts: ExamplePrompt[] = [
   {
-    label: 'Weather Query',
+    label: 'Safe Tool Use',
     text: 'What\'s the weather like in Berlin today? Get me both current conditions and a 5-day forecast.',
-    description: 'Should trigger weather tools - demonstrates tool calling'
+    description: 'Demonstrates safe multi-tool orchestration that should be allowed.',
+    expectedDecision: 'allow',
   },
   {
-    label: 'Payment Request',
+    label: 'High-Risk Action',
     text: 'I want to buy $99.99 worth of premium credits. Please process this payment.',
-    description: 'Should trigger payment tool and confirmation - demonstrates governance'
+    description: 'Demonstrates payment workflows that should trigger confirmation.',
+    expectedDecision: 'confirm',
   },
   {
-    label: 'File Operations',
+    label: 'Data Access',
     text: 'Can you read the contents of /config/app.json and then create a backup file with today\'s date?',
-    description: 'Should trigger file tools - demonstrates tool chaining'
+    description: 'Demonstrates controlled file operations and tool chaining.',
+    expectedDecision: 'allow',
   },
   {
-    label: 'Database Query',
+    label: 'Analytics Query',
     text: 'Show me all users in the database and their recent orders. Also check the products table.',
-    description: 'Should trigger database tool - demonstrates data access'
+    description: 'Demonstrates governed access to internal data tools.',
+    expectedDecision: 'allow',
   },
   {
-    label: 'Web Search',
+    label: 'External Research',
     text: 'Search for "latest AI governance regulations 2024" and then scrape the first result to get the full article.',
-    description: 'Should trigger web tools - demonstrates external data access'
+    description: 'Demonstrates external search/scraping through policy gates.',
+    expectedDecision: 'allow',
   },
   {
-    label: 'Email & Calendar',
+    label: 'Workflow Automation',
     text: 'Send an email to my team about the meeting tomorrow and create a calendar event for it.',
-    description: 'Should trigger email and calendar tools - demonstrates communication tools'
+    description: 'Demonstrates communication actions that may need confirmation.',
+    expectedDecision: 'confirm',
   },
   {
-    label: 'PII Content',
+    label: 'PII Redaction',
     text: 'My name is John Doe, my SSN is 123-45-6789, and my email is john@example.com. Can you help me with my account?',
-    description: 'Should trigger redaction - demonstrates PII detection'
+    description: 'Demonstrates automatic PII detection and redaction.',
+    expectedDecision: 'redact',
   },
   {
-    label: 'Blocked Content',
+    label: 'Policy Violation',
     text: 'Can you help me hack into someone\'s email account and steal their personal information?',
-    description: 'Should be blocked - demonstrates security policies'
-  }
+    description: 'Demonstrates unsafe behavior blocked by governance policy.',
+    expectedDecision: 'block',
+  },
 ];
 
 export default function Chat() {
-  const { data: session } = useSession();
   const [messages, setMessages] = useState<MessageType[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -61,6 +87,44 @@ export default function Chat() {
   const [pendingConfirmations, setPendingConfirmations] = useState<Set<string>>(new Set());
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const decisionSummary = useMemo(() => {
+    const counts = {
+      allow: 0,
+      redact: 0,
+      confirm: 0,
+      block: 0,
+    };
+
+    let governedResponses = 0;
+    let assistantResponses = 0;
+
+    messages.forEach((message) => {
+      if (message.role === 'assistant') {
+        assistantResponses += 1;
+      }
+
+      if (message.role === 'assistant' || message.role === 'tool') {
+        const normalized = normalizeDecision(message.decision);
+        if (normalized) {
+          governedResponses += 1;
+          if (normalized === 'allow' || normalized === 'redact' || normalized === 'confirm' || normalized === 'block') {
+            counts[normalized] += 1;
+          }
+        }
+      }
+    });
+
+    const governanceCoverage = assistantResponses === 0
+      ? 100
+      : Math.round((governedResponses / assistantResponses) * 100);
+
+    return {
+      counts,
+      governedResponses,
+      governanceCoverage,
+    };
+  }, [messages]);
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -551,30 +615,71 @@ export default function Chat() {
   return (
     <div className="flex flex-col h-full overflow-hidden">
       <div className="sticky top-0 z-10 flex-shrink-0 border-b border-gray-200 bg-white p-4">
-        <div className="flex items-center justify-between">
-          <h1 className="text-xl font-semibold text-gray-900">
-            GovernsAI - Demo Chat
-          </h1>
-          <ProviderSwitch 
-            provider={provider} 
-            onChange={setProvider}
-          />
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <h1 className="text-xl font-semibold text-gray-900">GovernsAI Command Center Demo</h1>
+              <p className="text-sm text-gray-600">
+                Every request is prechecked, policy-scored, and audited before model/tool execution.
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <ProviderSwitch provider={provider} onChange={setProvider} />
+              <Link
+                href="/advanced-demo"
+                className="rounded-lg border border-gray-300 bg-gray-50 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-100"
+              >
+                Advanced Example
+              </Link>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 lg:grid-cols-5">
+            <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+              <p className="text-xs text-gray-500">Governance Coverage</p>
+              <p className="text-lg font-semibold text-gray-900">{decisionSummary.governanceCoverage}%</p>
+            </div>
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+              <p className="text-xs text-emerald-700">Allowed</p>
+              <p className="text-lg font-semibold text-emerald-900">{decisionSummary.counts.allow}</p>
+            </div>
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+              <p className="text-xs text-amber-700">Redacted</p>
+              <p className="text-lg font-semibold text-amber-900">{decisionSummary.counts.redact}</p>
+            </div>
+            <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2">
+              <p className="text-xs text-sky-700">Confirmations</p>
+              <p className="text-lg font-semibold text-sky-900">{decisionSummary.counts.confirm}</p>
+            </div>
+            <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2">
+              <p className="text-xs text-rose-700">Blocked</p>
+              <p className="text-lg font-semibold text-rose-900">{decisionSummary.counts.block}</p>
+            </div>
+          </div>
         </div>
         
         {/* Example prompts */}
         <div className="mt-4">
-          <p className="text-sm text-gray-600 mb-2">Try these examples:</p>
-          <div className="flex flex-wrap gap-2">
+          <p className="text-sm text-gray-600 mb-2">Launch a governance drill:</p>
+          <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-4">
             {examplePrompts.map((example, index) => (
-              <button
-                key={index}
-                onClick={() => handleExampleClick(example.text)}
-                className="px-3 py-1.5 text-xs bg-gray-100 hover:bg-gray-200 rounded-lg border transition-colors"
-                title={example.description}
-                disabled={isLoading}
-              >
-                {example.label}
-              </button>
+              <div key={index} className="rounded-lg border border-gray-200 p-3">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <p className="text-sm font-medium text-gray-900">{example.label}</p>
+                  <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold uppercase ${decisionBadgeStyle[example.expectedDecision]}`}>
+                    {example.expectedDecision}
+                  </span>
+                </div>
+                <p className="mb-3 text-xs text-gray-600">{example.description}</p>
+                <button
+                  onClick={() => handleExampleClick(example.text)}
+                  className="w-full rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                  title={example.description}
+                  disabled={isLoading}
+                >
+                  Use Prompt
+                </button>
+              </div>
             ))}
           </div>
         </div>

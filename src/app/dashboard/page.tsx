@@ -73,7 +73,7 @@ export default function Dashboard() {
   const toggleKeyStatus = (keyId: string) => {
     setApiKeys((prev) =>
       prev.map((key) =>
-        key.id === keyId ? { ...key, isActive: !key.id } : key
+        key.id === keyId ? { ...key, isActive: !key.isActive } : key
       )
     );
   };
