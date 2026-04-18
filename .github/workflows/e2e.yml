@@ -2,41 +2,26 @@ name: E2E Tests
 
 on:
   push:
-    branches: [dev, main, 'feat/**']
+    branches: [dev, 'feat/**']
   pull_request:
-    branches: [dev, main]
+    branches: [dev]
 
 jobs:
   e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-
-    services:
-      postgres:
-        image: pgvector/pgvector:pg15
-        env:
-          POSTGRES_USER: governs_user
-          POSTGRES_PASSWORD: governs_password
-          POSTGRES_DB: governs_ai_dev
-        ports:
-          - 5433:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+    timeout-minutes: 20
 
     env:
       E2E_USERNAME: ${{ secrets.E2E_USERNAME }}
       E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
-      E2E_BASE_URL: http://localhost:3004
-      GOVERNSAI_ISSUER: http://localhost:8088/realms/governs-ai
+      E2E_BASE_URL: ${{ secrets.STAGING_CHAT_URL }}
+      GOVERNSAI_ISSUER: ${{ secrets.STAGING_KEYCLOAK_URL }}/realms/governs-ai
       GOVERNSAI_CLIENT_ID: governs-chat
-      GOVERNSAI_CLIENT_SECRET: ${{ secrets.GOVERNSAI_CLIENT_SECRET }}
-      PRECHECK_URL: http://localhost:8082
-      PLATFORM_URL: http://localhost:3002
-      NEXTAUTH_SECRET: ci-test-secret
-      NEXTAUTH_URL: http://localhost:3004
+      GOVERNSAI_CLIENT_SECRET: ${{ secrets.KEYCLOAK_CHAT_CLIENT_SECRET }}
+      PRECHECK_URL: ${{ secrets.STAGING_PRECHECK_URL }}
+      PLATFORM_URL: ${{ secrets.STAGING_PLATFORM_URL }}
+      NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
+      NEXTAUTH_URL: ${{ secrets.STAGING_CHAT_URL }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
     steps:
@@ -56,6 +41,21 @@ jobs:
 
       - name: Install Playwright browsers
         run: pnpm dlx playwright install chromium --with-deps
+
+      - name: Warm up staging services
+        run: |
+          echo "Waking up Render free-tier services..."
+          for url in "${{ secrets.STAGING_PRECHECK_URL }}/api/v1/health" "${{ secrets.STAGING_KEYCLOAK_URL }}/health/ready"; do
+            echo "Pinging $url"
+            for i in $(seq 1 12); do
+              if curl -sf "$url" -o /dev/null; then
+                echo "  ✓ $url is up"
+                break
+              fi
+              echo "  waiting... ($i/12)"
+              sleep 10
+            done
+          done
 
       - name: Run E2E tests
         run: pnpm test:e2e
