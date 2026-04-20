@@ -3,8 +3,6 @@ name: E2E Tests
 on:
   push:
     branches: [dev]
-  pull_request:
-    branches: [dev]
   workflow_dispatch:
 
 jobs:
@@ -44,16 +42,15 @@ jobs:
       - name: Warm up staging services
         run: |
           echo "Waking up Render free-tier services..."
-          for url in "${{ secrets.STAGING_PRECHECK_URL }}/api/v1/health" "${{ secrets.STAGING_KEYCLOAK_URL }}/health/ready"; do
-            echo "Pinging $url"
-            for i in $(seq 1 10); do
-              if curl -sf --max-time 30 --connect-timeout 10 "$url" -o /dev/null; then
-                echo "  ✓ $url is up"
-                break
-              fi
-              echo "  waiting... ($i/10)"
-              sleep 15
-            done
+          url="${{ secrets.STAGING_PRECHECK_URL }}/api/v1/health"
+          echo "Pinging $url"
+          for i in $(seq 1 10); do
+            if curl -sf --max-time 30 --connect-timeout 10 "$url" -o /dev/null; then
+              echo "  ✓ precheck is up"
+              break
+            fi
+            echo "  waiting... ($i/10)"
+            sleep 15
           done
 
       - name: Run E2E tests
