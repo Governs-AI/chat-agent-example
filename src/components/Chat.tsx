@@ -191,6 +191,7 @@ export default function Chat() {
 
     const interval = setInterval(checkConfirmations, 2000); // Check every 2 seconds
     return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingConfirmations]);
 
   // Function to resume chat after confirmation approval
