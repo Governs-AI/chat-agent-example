@@ -289,7 +289,7 @@ export default function MCPToolTester() {
               </pre>
             ) : (
               <div className="text-gray-500 text-sm">
-                Select a tool and click "Test Tool" to see the response
+                Select a tool and click &quot;Test Tool&quot; to see the response
               </div>
             )}
           </div>

@@ -1,17 +1,30 @@
 import NextAuth from "next-auth";
 
+function safeIssuerUrl(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  try {
+    new URL(raw);
+    return raw;
+  } catch {
+    console.warn(`[auth] GOVERNSAI_ISSUER is not a valid URL: "${raw}" — OIDC disabled`);
+    return undefined;
+  }
+}
+
+const issuer = safeIssuerUrl(process.env.GOVERNSAI_ISSUER);
+
 export const {
   handlers: { GET, POST },
   auth,
   signIn,
   signOut,
 } = NextAuth({
-  providers: [
+  providers: issuer ? [
     {
       id: "governsai",
       name: "GovernsAI",
       type: "oidc",
-      issuer: process.env.GOVERNSAI_ISSUER,
+      issuer,
       clientId: process.env.GOVERNSAI_CLIENT_ID,
       clientSecret: process.env.GOVERNSAI_CLIENT_SECRET,
       authorization: {
@@ -33,7 +46,7 @@ export const {
         };
       },
     },
-  ],
+  ] : [],
   callbacks: {
     async jwt({ token, profile, account }) {
       // Store custom claims in JWT token on initial sign in

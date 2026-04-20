@@ -117,7 +117,7 @@ export default function AdvancedDemoPage() {
                     {scenario.expected}
                   </span>
                 </div>
-                <p className="mt-2 text-sm text-slate-300">"{scenario.prompt}"</p>
+                <p className="mt-2 text-sm text-slate-300">&quot;{scenario.prompt}&quot;</p>
                 <p className="mt-2 text-xs text-slate-400">{scenario.why}</p>
               </div>
             ))}

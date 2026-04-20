@@ -1,0 +1,66 @@
+name: E2E Tests
+
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      E2E_USERNAME: ${{ secrets.E2E_USERNAME }}
+      E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
+      E2E_CHAT_URL: ${{ secrets.STAGING_CHAT_URL }}
+      GOVERNSAI_ISSUER: ${{ secrets.STAGING_KEYCLOAK_URL }}/realms/governs-ai
+      GOVERNSAI_CLIENT_ID: governs-chat
+      GOVERNSAI_CLIENT_SECRET: ${{ secrets.KEYCLOAK_CHAT_CLIENT_SECRET }}
+      PRECHECK_URL: ${{ secrets.STAGING_PRECHECK_URL }}
+      PLATFORM_URL: ${{ secrets.STAGING_PLATFORM_URL }}
+      NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
+      NEXTAUTH_URL: ${{ secrets.STAGING_CHAT_URL }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: pnpm dlx playwright install chromium --with-deps
+
+      - name: Warm up staging services
+        run: |
+          echo "Waking up Render free-tier services..."
+          url="${{ secrets.STAGING_PRECHECK_URL }}/api/v1/health"
+          echo "Pinging $url"
+          for i in $(seq 1 10); do
+            if curl -sf --max-time 30 --connect-timeout 10 "$url" -o /dev/null; then
+              echo "  ✓ precheck is up"
+              break
+            fi
+            echo "  waiting... ($i/10)"
+            sleep 15
+          done
+
+      - name: Run E2E tests
+        run: pnpm test:e2e
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7

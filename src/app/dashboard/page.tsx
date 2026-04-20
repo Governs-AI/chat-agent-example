@@ -283,7 +283,7 @@ export default function Dashboard() {
           </h3>
           <div className="text-sm text-blue-800 space-y-2">
             <p>
-              1. <strong>Create a key:</strong> Click "Create New Key" and give
+              1. <strong>Create a key:</strong> Click &quot;Create New Key&quot; and give
               it a descriptive name
             </p>
             <p>
