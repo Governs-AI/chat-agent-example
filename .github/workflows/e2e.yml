@@ -13,7 +13,7 @@ jobs:
     env:
       E2E_USERNAME: ${{ secrets.E2E_USERNAME }}
       E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
-      E2E_BASE_URL: ${{ secrets.STAGING_CHAT_URL }}
+      E2E_CHAT_URL: ${{ secrets.STAGING_CHAT_URL }}
       GOVERNSAI_ISSUER: ${{ secrets.STAGING_KEYCLOAK_URL }}/realms/governs-ai
       GOVERNSAI_CLIENT_ID: governs-chat
       GOVERNSAI_CLIENT_SECRET: ${{ secrets.KEYCLOAK_CHAT_CLIENT_SECRET }}
