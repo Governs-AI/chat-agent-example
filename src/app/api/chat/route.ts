@@ -114,7 +114,7 @@ async function executeToolCall(
     writer.writeDecision(precheckResponse.decision, precheckResponse.reasons);
 
     // Handle precheck decision
-    if (precheckResponse.decision === 'block' || precheckResponse.decision === 'deny') {
+    if (precheckResponse.decision === 'deny') {
       console.log(`❌ TOOL CALL BLOCKED: ${toolCall.function.name}`);
 
       // Clean up the error message to be more user-friendly
@@ -332,7 +332,7 @@ export async function POST(request: NextRequest) {
         writer.writeDecision(precheckResponse.decision, precheckResponse.reasons);
 
         // Step 2: Handle precheck decision
-        if (precheckResponse.decision === 'block' || precheckResponse.decision === 'deny') {
+        if (precheckResponse.decision === 'deny') {
           console.log('❌ REQUEST BLOCKED BY PRECHECK');
           writer.writeError(
             `Request blocked: ${precheckResponse.reasons?.join(', ') || 'Policy violation'}`

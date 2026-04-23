@@ -151,7 +151,7 @@ async function runGovernedCall(userId: string, rawPrompt: string) {
     corr_id: corrId,
   });
 
-  if (pre.decision === "block" || pre.decision === "deny") {
+  if (pre.decision === "deny") {
     return { status: "blocked", reasons: pre.reasons, corrId };
   }
 

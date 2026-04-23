@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
       const precheckResponse = await precheck(precheckRequest, userId);
 
       // Step 2: Handle precheck decision
-      if (precheckResponse.decision === 'block') {
+      if (precheckResponse.decision === 'deny') {
         return Response.json({
           success: false,
           error: 'MCP call blocked by policy',

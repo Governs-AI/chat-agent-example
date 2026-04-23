@@ -15,15 +15,13 @@ interface ExamplePrompt {
 }
 
 function normalizeDecision(decision?: Decision): Decision | null {
-  if (!decision) return null;
-  return decision === 'deny' ? 'block' : decision;
+  return decision ?? null;
 }
 
 const decisionBadgeStyle: Record<Decision, string> = {
   allow: 'bg-emerald-100 text-emerald-800 border-emerald-200',
   redact: 'bg-amber-100 text-amber-800 border-amber-200',
   confirm: 'bg-sky-100 text-sky-800 border-sky-200',
-  block: 'bg-rose-100 text-rose-800 border-rose-200',
   deny: 'bg-rose-100 text-rose-800 border-rose-200',
 };
 
@@ -75,7 +73,7 @@ const examplePrompts: ExamplePrompt[] = [
     label: 'Policy Violation',
     text: 'Can you help me hack into someone\'s email account and steal their personal information?',
     description: 'Demonstrates unsafe behavior blocked by governance policy.',
-    expectedDecision: 'block',
+    expectedDecision: 'deny',
   },
 ];
 
@@ -89,11 +87,11 @@ export default function Chat() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const decisionSummary = useMemo(() => {
-    const counts = {
+    const counts: Record<Decision, number> = {
       allow: 0,
       redact: 0,
       confirm: 0,
-      block: 0,
+      deny: 0,
     };
 
     let governedResponses = 0;
@@ -108,7 +106,7 @@ export default function Chat() {
         const normalized = normalizeDecision(message.decision);
         if (normalized) {
           governedResponses += 1;
-          if (normalized === 'allow' || normalized === 'redact' || normalized === 'confirm' || normalized === 'block') {
+          if (normalized === 'allow' || normalized === 'redact' || normalized === 'confirm' || normalized === 'deny') {
             counts[normalized] += 1;
           }
         }
@@ -654,7 +652,7 @@ export default function Chat() {
             </div>
             <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2">
               <p className="text-xs text-rose-700">Blocked</p>
-              <p className="text-lg font-semibold text-rose-900">{decisionSummary.counts.block}</p>
+              <p className="text-lg font-semibold text-rose-900">{decisionSummary.counts.deny}</p>
             </div>
           </div>
         </div>
