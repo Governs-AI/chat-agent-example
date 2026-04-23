@@ -1,12 +1,28 @@
 import { test as base, expect, type Page } from '@playwright/test';
 
 export const env = {
-  chatUrl: process.env.E2E_CHAT_URL || 'http://localhost:3004',
-  platformUrl: process.env.E2E_PLATFORM_URL || 'http://localhost:3002',
-  keycloakUrl: process.env.E2E_KEYCLOAK_URL || 'http://localhost:8088',
+  // Chat app: BASE_URL → E2E_CHAT_URL → local fallback
+  chatUrl:
+    process.env.BASE_URL ||
+    process.env.E2E_CHAT_URL ||
+    'http://localhost:3004',
+
+  // Platform dashboard (decisions page)
+  platformUrl:
+    process.env.E2E_PLATFORM_URL ||
+    'https://platform-platform-pi.vercel.app',
+
+  // Keycloak OIDC provider
+  keycloakUrl:
+    process.env.E2E_KEYCLOAK_URL ||
+    'https://governs-keycloak.onrender.com',
+
   keycloakRealm: process.env.E2E_KEYCLOAK_REALM || 'governs-ai',
-  username: process.env.E2E_USERNAME || 'demo@governs.ai',
-  password: process.env.E2E_PASSWORD || 'demo-password',
+
+  // Test credentials — must be provided via env vars for real runs
+  username: process.env.KEYCLOAK_USER || process.env.E2E_USERNAME || '',
+  password: process.env.KEYCLOAK_PASSWORD || process.env.E2E_PASSWORD || '',
+
   orgSlug: process.env.E2E_ORG_SLUG || 'local-dev-org',
 };
 

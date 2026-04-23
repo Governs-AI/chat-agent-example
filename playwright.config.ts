@@ -1,6 +1,11 @@
 import { defineConfig, devices } from '@playwright/test';
 
-const CHAT_URL = process.env.E2E_CHAT_URL || 'http://localhost:3004';
+// BASE_URL takes precedence for CI/CD environments; E2E_CHAT_URL is the legacy override.
+// Falls back to the known staging deployment so tests can run without local services.
+const CHAT_URL =
+  process.env.BASE_URL ||
+  process.env.E2E_CHAT_URL ||
+  'http://localhost:3004';
 
 export default defineConfig({
   testDir: './tests/e2e',
