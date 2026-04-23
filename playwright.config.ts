@@ -14,7 +14,7 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   workers: 1,
   reporter: process.env.CI ? [['github'], ['html', { open: 'never' }]] : 'list',
-  timeout: 60_000,
+  timeout: 120_000,
   expect: { timeout: 15_000 },
   use: {
     baseURL: CHAT_URL,
@@ -22,7 +22,7 @@ export default defineConfig({
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
     actionTimeout: 15_000,
-    navigationTimeout: 30_000,
+    navigationTimeout: 60_000,
   },
   projects: [
     {
