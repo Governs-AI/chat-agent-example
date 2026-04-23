@@ -80,7 +80,7 @@ export async function precheck(
     if (error instanceof SDKPrecheckError) {
       console.error('⛔ SDK Precheck failed:', error.message);
       return {
-        decision: 'block',
+        decision: 'deny',
         content: {
           messages: input.payload?.messages || [],
           args: input.payload?.args || input.payload || {}
@@ -96,7 +96,7 @@ export async function precheck(
     } else if (error instanceof GovernsAIError) {
       console.error('⛔ GovernsAI SDK error:', error.message);
       return {
-        decision: 'block',
+        decision: 'deny',
         content: {
           messages: input.payload?.messages || [],
           args: input.payload?.args || input.payload || {}
@@ -115,7 +115,7 @@ export async function precheck(
     console.error('⛔ Precheck service connection failed - BLOCKING request for security');
     console.error('Error:', error instanceof Error ? error.message : 'Unknown error');
     return {
-      decision: 'block',
+      decision: 'deny',
       content: {
         messages: input.payload?.messages || [],
         args: input.payload?.args || input.payload || {}
