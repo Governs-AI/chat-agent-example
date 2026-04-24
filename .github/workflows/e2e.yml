@@ -43,17 +43,24 @@ jobs:
         run: |
           echo "Waking up Render free-tier services..."
 
+          # Warmup treats ANY HTTP response as "service is awake" — we care that the
+          # Render container has exited cold-start, not that a specific route returns
+          # 2xx. That's what the Playwright specs are for. Using -f (fail-on-http-error)
+          # made this step flap whenever /login returned a 3xx/4xx on a warm container.
           warmup() {
             local name="$1"
             local url="$2"
             local max_attempts=20
             echo "Pinging $name at $url"
             for i in $(seq 1 $max_attempts); do
-              if curl -sfL --max-time 60 --connect-timeout 10 "$url" -o /dev/null; then
-                echo "  ✓ $name is up (attempt $i)"
+              local code
+              code=$(curl -sSL -o /dev/null -w "%{http_code}" \
+                --max-time 60 --connect-timeout 10 "$url" || echo "000")
+              if [ "$code" != "000" ] && [ "$code" != "502" ] && [ "$code" != "503" ] && [ "$code" != "504" ]; then
+                echo "  ✓ $name is up (attempt $i, HTTP $code)"
                 return 0
               fi
-              echo "  $name waiting... ($i/$max_attempts)"
+              echo "  $name waiting... ($i/$max_attempts, HTTP $code)"
               sleep 15
             done
             echo "  ✗ $name failed to wake up after $max_attempts attempts"
@@ -62,7 +69,7 @@ jobs:
 
           warmup precheck "${{ secrets.STAGING_PRECHECK_URL }}/api/v1/health"
           warmup keycloak "${{ secrets.STAGING_KEYCLOAK_URL }}/realms/governs-ai/.well-known/openid-configuration"
-          warmup chat     "${{ secrets.STAGING_CHAT_URL }}/login"
+          warmup chat     "${{ secrets.STAGING_CHAT_URL }}/"
 
       - name: Run E2E tests
         run: pnpm test:e2e
