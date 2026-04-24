@@ -46,16 +46,17 @@ jobs:
           warmup() {
             local name="$1"
             local url="$2"
+            local max_attempts=20
             echo "Pinging $name at $url"
-            for i in $(seq 1 10); do
+            for i in $(seq 1 $max_attempts); do
               if curl -sfL --max-time 60 --connect-timeout 10 "$url" -o /dev/null; then
-                echo "  ✓ $name is up"
+                echo "  ✓ $name is up (attempt $i)"
                 return 0
               fi
-              echo "  $name waiting... ($i/10)"
+              echo "  $name waiting... ($i/$max_attempts)"
               sleep 15
             done
-            echo "  ✗ $name failed to wake up after 10 attempts"
+            echo "  ✗ $name failed to wake up after $max_attempts attempts"
             return 1
           }
 

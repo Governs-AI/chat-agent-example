@@ -17,6 +17,14 @@ test.describe('PII message reaches the platform decision log', () => {
       chatResponse.headers()['x-request-id'] ||
       null;
 
+    // Without a correlation id we cannot prove the dashboard row belongs to *this*
+    // prompt — a stale redact row from a prior run would silently satisfy the match
+    // predicate. Fail loudly so the test can't pass on ambient data.
+    expect(
+      correlationId,
+      '/api/chat response must carry x-correlation-id (or x-request-id)',
+    ).toBeTruthy();
+
     const redactBadge = authed.getByText(/^Redact$/i).first();
     await expect(redactBadge).toBeVisible({ timeout: 20_000 });
 
@@ -26,23 +34,38 @@ test.describe('PII message reaches the platform decision log', () => {
     const dashboardPage = await context.newPage();
     await dashboardPage.goto(`${env.platformUrl}/o/${env.orgSlug}/decisions`);
 
-    const decisionsResponse = await dashboardPage.waitForResponse(
-      (resp) => resp.url().includes('/api/v1/decisions') && resp.ok(),
-      { timeout: 30_000 },
-    );
-    const payload = await decisionsResponse.json();
-    const decisions: any[] = payload.decisions || [];
+    // Poll the decisions endpoint so the test tolerates ingestion lag: /api/chat
+    // returning does not guarantee the decision is already in the read model.
+    await expect
+      .poll(
+        async () => {
+          const resp = await dashboardPage.request.get(
+            `${env.platformUrl}/api/v1/decisions?orgSlug=${encodeURIComponent(env.orgSlug)}`,
+          );
+          if (!resp.ok()) return false;
+          const payload = await resp.json();
+          const decisions: any[] = payload.decisions ?? [];
+          return decisions.some((d) => {
+            if (d.correlationId !== correlationId) return false;
+            const isTransformOrRedact =
+              d.decision === 'transform' || d.decision === 'redact';
+            const hasPiiTag = (d.tags ?? []).some((t: string) => /pii/i.test(t));
+            return isTransformOrRedact || hasPiiTag;
+          });
+        },
+        {
+          message: `Expected a redact/transform decision with correlationId=${correlationId} to appear in the platform decision log`,
+          timeout: 30_000,
+          intervals: [1_000, 2_000, 4_000, 8_000],
+        },
+      )
+      .toBe(true);
 
-    const matched = decisions.find((d) => {
-      const hasCorr = correlationId ? d.correlationId === correlationId : true;
-      const isTransformOrRedact = d.decision === 'transform' || d.decision === 'redact';
-      return hasCorr && (isTransformOrRedact || (d.tags || []).some((t: string) => /pii/i.test(t)));
-    });
-
-    expect(matched, 'Expected a redact/transform decision to appear in the dashboard decision log').toBeTruthy();
-
-    await expect(
-      dashboardPage.getByText(/transform|redact/i).first(),
-    ).toBeVisible();
+    // Scope to a decisions-table row so we don't match legend / filter labels.
+    const decisionRow = dashboardPage
+      .getByRole('row')
+      .filter({ hasText: /transform|redact/i })
+      .first();
+    await expect(decisionRow).toBeVisible();
   });
 });

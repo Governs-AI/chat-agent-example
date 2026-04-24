@@ -87,6 +87,10 @@ test.describe('QA.4-1 · OIDC login via Keycloak → chat UI', () => {
 const PII_PROMPT =
   'My name is John Doe, my SSN is 123-45-6789, and my email is john@example.com. Can you help me with my account?';
 
+// The PII prompt → decision-log dashboard flow is covered in detail by
+// `pii-decision-log.spec.ts` (GOV-593). This describe only asserts the
+// chat-UI side (Redact badge + Redacted stats tile) so the two specs
+// don't duplicate the /api/v1/decisions assertion.
 test.describe('QA.4-2 · PII prompt → Redact badge appears in chat', () => {
   test('sending a message with an email address surfaces a Redact decision badge', async ({
     authed,
@@ -107,53 +111,6 @@ test.describe('QA.4-2 · PII prompt → Redact badge appears in chat', () => {
     // The Redacted stats tile counter must be non-zero
     const redactedTile = authed.getByText(/^Redacted$/).locator('..');
     await expect(redactedTile).toContainText(/[1-9]\d*/);
-  });
-
-  test('PII prompt produces a redact/transform decision in the platform decision log', async ({
-    authed,
-    context,
-  }) => {
-    const chatResponsePromise = authed.waitForResponse(
-      (resp) => resp.url().endsWith('/api/chat') && resp.status() === 200,
-    );
-
-    await sendChatMessage(authed, PII_PROMPT);
-
-    const chatResponse = await chatResponsePromise;
-    const correlationId =
-      chatResponse.headers()['x-correlation-id'] ||
-      chatResponse.headers()['x-request-id'] ||
-      null;
-
-    // Open the platform decisions page in a second tab
-    const dashboardPage = await context.newPage();
-    await dashboardPage.goto(`${env.platformUrl}/o/${env.orgSlug}/decisions`);
-
-    const decisionsResponse = await dashboardPage.waitForResponse(
-      (resp) => resp.url().includes('/api/v1/decisions') && resp.ok(),
-      { timeout: 30_000 },
-    );
-    const payload = await decisionsResponse.json();
-    const decisions: any[] = payload.decisions ?? [];
-
-    const matched = decisions.find((d) => {
-      const corrOk = correlationId ? d.correlationId === correlationId : true;
-      const isRedactOrTransform =
-        d.decision === 'redact' ||
-        d.decision === 'transform' ||
-        (d.tags ?? []).some((t: string) => /pii/i.test(t));
-      return corrOk && isRedactOrTransform;
-    });
-
-    expect(
-      matched,
-      'Expected a redact or transform decision to appear in the platform decision log',
-    ).toBeTruthy();
-
-    // The decision must also appear visually in the dashboard table
-    await expect(
-      dashboardPage.getByText(/transform|redact/i).first(),
-    ).toBeVisible();
   });
 });
 
