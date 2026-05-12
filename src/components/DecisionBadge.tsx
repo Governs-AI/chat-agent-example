@@ -32,11 +32,6 @@ const decisionStyles: Record<
     text: "text-yellow-800",
     icon: "⏸️",
   },
-  block: {
-    bg: "bg-red-100 border-red-300",
-    text: "text-red-900",
-    icon: "🚫",
-  },
 };
 
 export default function DecisionBadge({

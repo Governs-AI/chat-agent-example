@@ -12,7 +12,7 @@ interface MessageProps {
 export default function Message({ message, className = "" }: MessageProps) {
   const isUser = message.role === "user";
   const isTool = message.role === "tool";
-  const isBlocked = message.decision === "block";
+  const isBlocked = message.decision === "deny";
   const [toast, setToast] = useState<string | null>(null);
 
   const canRemember = !isTool && !!message.content?.trim();

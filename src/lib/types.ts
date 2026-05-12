@@ -11,12 +11,12 @@ export interface Message {
   correlationId?: string;
 }
 
-export type Decision = "allow" | "deny" | "redact" | "block" | "confirm";
+export type Decision = "allow" | "deny" | "redact" | "confirm";
 
 // Type guard function to check if a string is a valid Decision
 export function isValidDecision(value: any): value is Decision {
   return typeof value === 'string' &&
-    ['allow', 'deny', 'redact', 'block', 'confirm'].includes(value);
+    ['allow', 'deny', 'redact', 'confirm'].includes(value);
 }
 
 export type Provider = "openai" | "ollama";
