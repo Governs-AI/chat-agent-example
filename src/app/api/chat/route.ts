@@ -1,9 +1,8 @@
 import { NextRequest } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import { precheck, createChatPrecheckRequest, createMCPPrecheckRequest, fetchBudgetContext } from '@/lib/precheck';
-import { OpenAIProvider } from '@/lib/providers/openai';
-import { OllamaProvider } from '@/lib/providers/ollama';
 import { ChatProvider } from '@/lib/providers/base';
+import { createProvider, defaultProvider } from '@/lib/providers';
 import { SSEWriter } from '@/lib/sse';
 import { ChatRequest, Provider, Message, ToolCall } from '@/lib/types';
 import { AVAILABLE_TOOLS } from '@/lib/tools';
@@ -43,6 +42,7 @@ function detectToolIntent(userText: string): string[] {
 async function recordUsage(
   userId: string,
   orgId: string,
+  provider: string,
   model: string,
   inputTokens: number,
   outputTokens: number,
@@ -58,7 +58,7 @@ async function recordUsage(
     await client.recordUsage({
       userId,
       orgId,
-      provider: 'openai', // or determine from model
+      provider,
       model,
       inputTokens,
       outputTokens,
@@ -220,12 +220,6 @@ async function streamFollowUp(
   }
 }
 
-function createProvider(provider: Provider): ChatProvider {
-  if (provider === 'openai') return new OpenAIProvider();
-  if (provider === 'ollama') return new OllamaProvider();
-  throw new Error(`Unsupported provider: ${provider}`);
-}
-
 /** Only plain user/assistant turns are replayed to the model. */
 function conversationOnly(messages: Message[]): Message[] {
   return messages
@@ -260,7 +254,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const provider: Provider = requestProvider || (process.env.PROVIDER as Provider) || 'openai';
+    const provider: Provider = requestProvider || defaultProvider();
     const corrId = uuidv4();
 
     let controller: ReadableStreamDefaultController<Uint8Array>;
@@ -426,6 +420,7 @@ export async function POST(request: NextRequest) {
           await recordUsage(
             userId,
             orgId,
+            chatProvider.getName(),
             modelToUse,
             usageData.inputTokens,
             usageData.outputTokens,

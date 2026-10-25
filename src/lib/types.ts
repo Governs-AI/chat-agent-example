@@ -21,7 +21,7 @@ export function isValidDecision(value: any): value is Decision {
     ['allow', 'transform', 'deny', 'redact', 'confirm'].includes(value);
 }
 
-export type Provider = "openai" | "ollama";
+export type Provider = "openrouter" | "openai" | "ollama";
 
 export interface PolicyDefaults {
   ingress: { action: string };

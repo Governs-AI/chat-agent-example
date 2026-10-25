@@ -9,7 +9,7 @@ A production-ready Next.js chat application that demonstrates GovernsAI's govern
 ### Tech Stack
 - **Frontend**: Next.js 14 (App Router) + TypeScript + TailwindCSS
 - **Authentication**: Auth.js v5 (NextAuth) with OIDC provider
-- **AI Providers**: OpenAI API, Ollama (OpenAI-compatible)
+- **AI Providers**: OpenRouter (default, `openai/gpt-4.1-nano`), OpenAI, Ollama — all via the OpenAI-compatible API; hosted providers fall back to Ollama
 - **Streaming**: Server-Sent Events (SSE)
 - **Governance**: GovernsAI SDK integration with precheck service
 - **Database**: GovernsAI Platform API (external)
@@ -187,11 +187,14 @@ NEXTAUTH_URL=http://localhost:3000
 GOVERNSAI_CLIENT_ID=your-client-id
 GOVERNSAI_CLIENT_SECRET=your-client-secret
 
-# AI Providers
-PROVIDER=openai
-OPENAI_API_KEY=sk-your-key-here
+# AI Providers ("openrouter" | "openai" | "ollama"; unset = OpenRouter if keyed, else Ollama)
+PROVIDER=openrouter
+OPENROUTER_API_KEY=sk-or-...          # OPEN_ROUTER_API_KEY also accepted
+OPENROUTER_MODEL=openai/gpt-4.1-nano
+OPENAI_API_KEY=                       # only for PROVIDER=openai
 OLLAMA_BASE_URL=http://localhost:11434/v1
 OLLAMA_MODEL=llama3.1:8b
+OLLAMA_FALLBACK=true                  # false: surface hosted-provider errors
 
 # GovernsAI Integration
 PRECHECK_URL=http://localhost:8080
@@ -245,7 +248,10 @@ src/
 │   ├── sdk-client.ts                  # GovernsAI SDK client
 │   ├── providers/
 │   │   ├── base.ts                    # Base provider interface
-│   │   ├── openai.ts                  # OpenAI provider
+│   │   ├── index.ts                   # createProvider / defaultProvider
+│   │   ├── openai.ts                  # Any OpenAI-compatible API
+│   │   ├── openrouter.ts              # OpenRouter config (base URL, key, model)
+│   │   ├── fallback.ts                # Primary → Ollama if it fails before output
 │   │   └── ollama.ts                  # Ollama provider
 │   ├── tools.ts                       # Available MCP tools
 │   ├── mock-tools.ts                  # Mock tool implementations
@@ -368,8 +374,9 @@ pnpm start
 - **Usage Tracking**: Billing and analytics integration
 
 ### AI Providers
+- **OpenRouter** (default): any OpenRouter model; default `openai/gpt-4.1-nano` (cheap, reliable tool calls)
 - **OpenAI**: GPT models with tool calling
-- **Ollama**: Local models with OpenAI-compatible API
+- **Ollama**: Local models with OpenAI-compatible API; also the fallback when a hosted provider fails before answering
 - **Streaming**: Real-time response streaming
 - **Tool Integration**: MCP tool calling support
 
@@ -412,6 +419,12 @@ pnpm start
 *This specification reflects the current implementation as of the latest integration with GovernsAI authentication and governance features.*
 
 ## Recent Changes Log
+- **2026-10-25**: **OpenRouter is the default model provider.** `OpenAIProvider` takes a
+  base URL/key/model so it serves OpenAI and OpenRouter; `PROVIDER` unset picks OpenRouter
+  when `OPENROUTER_API_KEY` (or `OPEN_ROUTER_API_KEY`) is set, else Ollama. Hosted
+  providers fall back to Ollama if they fail before producing output
+  (`OLLAMA_FALLBACK=false` disables). Streaming now requests usage, and recorded usage
+  carries the real provider name. UI switch: OpenRouter / OpenAI / Ollama.
 - **2026-10-25**: **v2 — decisions are honoured end to end.** On `transform` the
   model now receives the redacted text. It used to get the original messages
   because the code read `content.messages`, which precheck never returns. Tool
