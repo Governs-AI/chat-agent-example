@@ -12,4 +12,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   fail before answering.
 
 ### Fixed
+- `PROVIDER` is read at runtime on the server. `next.config.mjs` used to inline
+  it at build time, so a production build ignored the runtime value.
 - Streamed responses now report token usage, and usage records the actual provider.

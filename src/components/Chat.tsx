@@ -94,9 +94,9 @@ export default function Chat() {
   const [messages, setMessages] = useState<MessageType[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  // PROVIDER is inlined at build time (next.config.mjs); the server falls back
-  // to Ollama when the chosen hosted provider is unavailable.
-  const [provider, setProvider] = useState<Provider>((process.env.PROVIDER as Provider) || 'openrouter');
+  // Inlined at build time (next.config.mjs); the server falls back to Ollama
+  // when the chosen hosted provider is unavailable.
+  const [provider, setProvider] = useState<Provider>((process.env.DEFAULT_PROVIDER_UI as Provider) || 'openrouter');
   const [pendingConfirmations, setPendingConfirmations] = useState<Set<string>>(new Set());
   const messagesRef = useRef<MessageType[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);

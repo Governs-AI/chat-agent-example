@@ -3,7 +3,9 @@ const nextConfig = {
     output: 'standalone',
     env: {
       // Public config — safe to expose to the browser
-      PROVIDER: process.env.PROVIDER,
+      // Inlined at build time, so only the UI's initial selection uses it. The
+      // server reads PROVIDER at runtime (src/lib/providers/index.ts).
+      DEFAULT_PROVIDER_UI: process.env.PROVIDER,
       PRECHECK_URL: process.env.PRECHECK_URL,
       DEMO_USER_ID: process.env.DEMO_USER_ID,
       OLLAMA_BASE_URL: process.env.OLLAMA_BASE_URL,
