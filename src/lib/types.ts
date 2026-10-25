@@ -11,12 +11,14 @@ export interface Message {
   correlationId?: string;
 }
 
-export type Decision = "allow" | "deny" | "redact" | "confirm";
+// Precheck returns allow | transform | deny | confirm; "redact" is the
+// legacy name for transform and still accepted.
+export type Decision = "allow" | "transform" | "deny" | "redact" | "confirm";
 
 // Type guard function to check if a string is a valid Decision
 export function isValidDecision(value: any): value is Decision {
   return typeof value === 'string' &&
-    ['allow', 'deny', 'redact', 'confirm'].includes(value);
+    ['allow', 'transform', 'deny', 'redact', 'confirm'].includes(value);
 }
 
 export type Provider = "openai" | "ollama";
@@ -68,6 +70,9 @@ export interface PrecheckRequest {
 
 export interface PrecheckResponse {
   decision: Decision;
+  /** Precheck's output text — redacted when decision is transform. */
+  raw_text_out?: string;
+  policy_id?: string;
   content?: {
     messages?: Message[];
     [key: string]: any;
@@ -87,6 +92,8 @@ export interface ChatRequest {
   messages: Message[];
   model?: string;
   provider?: Provider;
+  /** Continue a request a reviewer approved in the GovernsAI dashboard. */
+  resume?: { correlationId: string };
 }
 
 export interface MCPRequest {
@@ -125,6 +132,16 @@ export interface Tool {
 }
 
 export interface StreamEvent {
-  type: "decision" | "content" | "error" | "done" | "tool_call" | "tool_result";
+  type:
+    | "decision"
+    | "content"
+    | "error"
+    | "done"
+    | "tool_call"
+    | "tool_result"
+    // The request is held for approval: { correlationId, confirmationUrl, reasons }
+    | "confirmation"
+    // What the model actually received for the last user message: { content }
+    | "redacted_input";
   data: any;
 }

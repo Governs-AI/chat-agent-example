@@ -56,7 +56,6 @@ export async function precheck(
   try {
     // Use SDK client for precheck
     const client = getSDKClient();
-    console.log('SDK client:', client);
     // Convert local types to SDK types
     const sdkRequest: SDKPrecheckRequest = {
       tool: input.tool,
@@ -65,12 +64,11 @@ export async function precheck(
       payload: input.payload,
       tags: input.tags,
       corr_id: input.corr_id,
-      policy_config: input.policy_config,
+      policy_config: input.policy_config as SDKPrecheckRequest["policy_config"],
       tool_config: input.tool_config,
       budget_context: input.budget_context,
     };
 
-    console.log('SDK request:', sdkRequest);
     const sdkResponse = await client.precheck(sdkRequest, userId);
 
     return sdkResponse as unknown as PrecheckResponse;
@@ -162,7 +160,9 @@ export function createChatPrecheckRequest(
   };
 }
 
-// Helper function to create a precheck request for MCP calls
+// Helper function to create a precheck request for a tool call.
+// The arguments themselves are what get checked: they are what the tool
+// receives, and the model may have put PII in them that the user never typed.
 export function createMCPPrecheckRequest(
   tool: string,
   args: Record<string, any>,
@@ -170,12 +170,7 @@ export function createMCPPrecheckRequest(
   policyConfig?: any,
   toolConfig?: any,
   budgetContext?: any,
-  lastMessage?: Message
 ): PrecheckRequest {
-  // Create a raw_text representation of the MCP call for precheck
-  // const rawText = `MCP Tool Call: ${tool} with arguments: ${JSON.stringify(args)}`;
-  const rawText = lastMessage?.content || '';
-
   // Extract purchase amount from args for payment tools
   let enhancedToolConfig = { ...toolConfig };
   if (tool === 'payment_process' && args.amount) {
@@ -183,7 +178,7 @@ export function createMCPPrecheckRequest(
       ...toolConfig,
       metadata: {
         ...toolConfig?.metadata,
-        purchase_amount: Number(args.amount), // ← Extract purchase amount
+        purchase_amount: Number(args.amount),
         amount: Number(args.amount),
         currency: args.currency || 'USD',
         description: args.description || 'Payment transaction',
@@ -192,17 +187,17 @@ export function createMCPPrecheckRequest(
   }
 
   return {
-    tool: tool, // Use the actual tool name, not "mcp.${tool}"
+    tool,
     scope: enhancedToolConfig?.scope || 'net.external',
-    raw_text: rawText,
+    raw_text: JSON.stringify(args),
     payload: {
       tool,
       args,
     },
-    tags: ['demo', 'mcp'],
+    tags: ['demo', 'tool_call'],
     corr_id: corrId,
     policy_config: policyConfig,
     tool_config: enhancedToolConfig,
-    budget_context: budgetContext, // ← Add budget context
+    budget_context: budgetContext,
   };
 }
