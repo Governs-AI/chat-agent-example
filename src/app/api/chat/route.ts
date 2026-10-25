@@ -1,14 +1,19 @@
 import { NextRequest } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import { precheck, createChatPrecheckRequest, createMCPPrecheckRequest, fetchBudgetContext } from '@/lib/precheck';
-import { OpenAIProvider } from '@/lib/providers/openai';
-import { OllamaProvider } from '@/lib/providers/ollama';
+import { ChatProvider } from '@/lib/providers/base';
+import { createProvider, defaultProvider } from '@/lib/providers';
 import { SSEWriter } from '@/lib/sse';
 import { ChatRequest, Provider, Message, ToolCall } from '@/lib/types';
 import { AVAILABLE_TOOLS } from '@/lib/tools';
-import { } from '@/lib/tool-metadata';
-import { } from '@/lib/platform-api';
 import { getSDKClient, searchMemoryContext, getRecentMemoryContext } from '@/lib/sdk-client';
+import {
+  applyChatTransform,
+  argsAfterPrecheck,
+  consumeApproval,
+  requestConfirmation,
+  textOut,
+} from '@/lib/governance';
 import { auth } from '@/lib/auth';
 
 // Intent detector to decide which tools (if any) should be enabled
@@ -19,7 +24,7 @@ function detectToolIntent(userText: string): string[] {
   const wantsFile = /(read file|write file|save to file|open file|file\s+(read|write|list))/.test(text);
   const wantsDb = /(query|database|sql|select|insert|update|delete)\b/.test(text);
   const wantsPayment = /(pay|payment|charge|refund|checkout|transaction)/.test(text);
-  const wantsEmail = /(send email|email to|compose email)/.test(text);
+  const wantsEmail = /(send email|email to|compose email|send an email|email)/.test(text);
   const wantsCalendar = /(calendar|schedule|event|meeting)/.test(text);
 
   const toolNames: string[] = [];
@@ -37,12 +42,12 @@ function detectToolIntent(userText: string): string[] {
 async function recordUsage(
   userId: string,
   orgId: string,
+  provider: string,
   model: string,
   inputTokens: number,
   outputTokens: number,
   tool?: string,
   correlationId?: string,
-  metadata?: Record<string, any>
 ) {
   try {
     const client = getSDKClient();
@@ -53,7 +58,7 @@ async function recordUsage(
     await client.recordUsage({
       userId,
       orgId,
-      provider: 'openai', // or determine from model
+      provider,
       model,
       inputTokens,
       outputTokens,
@@ -68,175 +73,158 @@ async function recordUsage(
   }
 }
 
-// Helper function to execute tool calls
+async function runTool(name: string, args: Record<string, any>) {
+  const { mockTools } = await import('@/lib/mock-tools');
+  const toolFunction = mockTools[name as keyof typeof mockTools];
+  if (!toolFunction) {
+    throw new Error(`Unknown tool: ${name}`);
+  }
+  return toolFunction(args as any);
+}
+
+interface ExecutedTool {
+  toolCall: ToolCall;
+  result: unknown;
+}
+
+/**
+ * Precheck a tool call's arguments, then run it, refuse it, or hold it for
+ * approval. Returns the executed call so the model can use its result.
+ */
 async function executeToolCall(
   toolCall: ToolCall,
   writer: SSEWriter,
-  userId?: string,
-  apiKey?: string,
-  _platformToolMetadata?: Record<string, any>,
+  userId: string,
   budgetContext?: any,
-  skipPrecheck: boolean = false,
-  lastMessage?: Message
-) {
+): Promise<ExecutedTool | null> {
+  const name = toolCall.function.name;
+  let args: Record<string, any>;
   try {
-    console.log('Executing tool call:', toolCall.function.name, 'with args:', toolCall.function.arguments);
+    args = JSON.parse(toolCall.function.arguments || '{}');
+  } catch {
+    writer.writeToolResult({
+      tool_call_id: toolCall.id,
+      success: false,
+      error: 'Tool arguments were not valid JSON',
+    });
+    return null;
+  }
 
-    // Parse tool arguments
-    const args = JSON.parse(toolCall.function.arguments);
+  try {
+    const corrId = uuidv4();
+    const precheckResponse = await precheck(
+      createMCPPrecheckRequest(name, args, corrId, undefined, undefined, budgetContext),
+      userId,
+    );
 
-    // Create MCP precheck request for the tool call with policy and tool config
-    let precheckResponse;
-
-    if (skipPrecheck) {
-      console.log(`✅ SKIPPING PRECHECK FOR APPROVED REQUEST: ${toolCall.function.name}`);
-      precheckResponse = {
-        decision: 'allow' as const,
-        reasons: ['Request previously approved'],
-        content: { args }
-      };
-    } else {
-      const precheckRequest = createMCPPrecheckRequest(
-        toolCall.function.name,
-        args,
-        uuidv4(),
-        undefined,
-        undefined,
-        budgetContext,
-        lastMessage
-      );
-
-      precheckResponse = await precheck(precheckRequest, userId || '');
-    }
-
-
-    // Send tool call decision
     writer.writeDecision(precheckResponse.decision, precheckResponse.reasons);
 
-    // Handle precheck decision
     if (precheckResponse.decision === 'deny') {
-      console.log(`❌ TOOL CALL BLOCKED: ${toolCall.function.name}`);
-
-      // Clean up the error message to be more user-friendly
-      let userFriendlyError = 'Policy violation';
-      if (precheckResponse.reasons && precheckResponse.reasons.length > 0) {
-        // Filter out technical precheck service messages
-        const cleanReasons = precheckResponse.reasons.filter(reason =>
+      const reasons = (precheckResponse.reasons || []).filter(
+        (reason) =>
           !reason.includes('Precheck service') &&
           !reason.includes('connection failed') &&
-          !reason.includes('service not available')
-        );
-
-        if (cleanReasons.length > 0) {
-          userFriendlyError = cleanReasons.join(', ');
-        }
-      }
-
+          !reason.includes('service not available'),
+      );
       writer.writeToolResult({
         tool_call_id: toolCall.id,
         success: false,
-        error: `Tool call blocked: ${userFriendlyError}`,
+        error: `Tool call blocked: ${reasons.join(', ') || 'Policy violation'}`,
         decision: precheckResponse.decision,
         reasons: precheckResponse.reasons,
       });
-      return;
+      return null;
     }
 
-    // Handle confirmation requirement
     if (precheckResponse.decision === 'confirm') {
-      console.log(`⏸️  TOOL CALL REQUIRES CONFIRMATION: ${toolCall.function.name}`);
-
-      // Create pending confirmation via platform API
-      const platformUrl = process.env.NEXT_PUBLIC_PLATFORM_URL || 'http://localhost:3002';
-      const confirmationResponse = await fetch(`${platformUrl}/api/v1/confirmation/create`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Governs-Key': apiKey || '',
-        },
-        body: JSON.stringify({
-          correlationId: uuidv4(),
-          requestType: 'tool_call',
-          requestDesc: `Execute tool: ${toolCall.function.name}`,
-          requestPayload: {
-            tool: toolCall.function.name,
-            args: JSON.parse(toolCall.function.arguments),
-          },
-          decision: precheckResponse.decision,
-          reasons: precheckResponse.reasons,
-        }),
+      // Hold the exact call for review; on approval the same args run.
+      const ticket = await requestConfirmation({
+        correlationId: corrId,
+        requestType: 'tool_call',
+        requestDesc: `Run ${name}`,
+        requestPayload: { tool: name, args, toolCallId: toolCall.id },
+        reasons: precheckResponse.reasons,
       });
-
-      if (!confirmationResponse.ok) {
-        writer.writeToolResult({
-          tool_call_id: toolCall.id,
-          success: false,
-          error: 'Failed to create confirmation request',
-          decision: precheckResponse.decision,
-          reasons: precheckResponse.reasons,
-        });
-        return;
-      }
-
-      const confirmationData = await confirmationResponse.json();
-
       writer.writeToolResult({
         tool_call_id: toolCall.id,
         success: false,
-        error: 'Confirmation required',
+        error: 'Waiting for approval',
         decision: precheckResponse.decision,
         reasons: precheckResponse.reasons,
         confirmationRequired: true,
-        correlationId: confirmationData.confirmation.correlationId,
-        confirmationUrl: `${platformUrl}/confirm/${confirmationData.confirmation.correlationId}`,
+        correlationId: ticket.correlationId,
+        confirmationUrl: ticket.confirmationUrl,
       });
-      return;
+      return null;
     }
 
-    console.log(`✅ TOOL CALL ALLOWED: ${toolCall.function.name} - Executing...`);
-
-    // Use processed arguments from precheck response
-    const processedArgs = precheckResponse.content?.args || args;
-
-    // Call the MCP function directly
-    console.log('Calling MCP function directly:', toolCall.function.name);
-
-    // Import the MCP tools directly
-    const { mockTools } = await import('@/lib/mock-tools');
-
-    // Execute the tool directly
-    const toolFunction = mockTools[toolCall.function.name as keyof typeof mockTools];
-
-    if (!toolFunction) {
-      throw new Error(`Unknown tool: ${toolCall.function.name}`);
+    const processed = argsAfterPrecheck(args, precheckResponse);
+    if (!processed.ok) {
+      writer.writeToolResult({
+        tool_call_id: toolCall.id,
+        success: false,
+        error: processed.error,
+        decision: 'deny',
+      });
+      return null;
     }
 
-    const mcpResult = {
-      success: true,
-      data: await toolFunction(processedArgs),
-      decision: precheckResponse.decision,
-      reasons: precheckResponse.reasons,
-    };
-
-    console.log('MCP function result:', mcpResult);
-
-    // Send tool result
+    const data = await runTool(name, processed.args);
     writer.writeToolResult({
       tool_call_id: toolCall.id,
-      success: mcpResult.success,
-      data: mcpResult.data,
-      error: (mcpResult.data as any)?.error,
-      decision: mcpResult.decision,
-      reasons: mcpResult.reasons,
+      success: true,
+      data,
+      error: (data as any)?.error,
+      decision: precheckResponse.decision,
+      reasons: precheckResponse.reasons,
     });
-
+    return {
+      toolCall: { ...toolCall, function: { name, arguments: JSON.stringify(processed.args) } },
+      result: data,
+    };
   } catch (error) {
     writer.writeToolResult({
       tool_call_id: toolCall.id,
       success: false,
       error: `Tool execution failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
     });
+    return null;
   }
+}
+
+/** Feed executed tool results back to the model for a final answer. */
+async function streamFollowUp(
+  chatProvider: ChatProvider,
+  model: string,
+  messages: Message[],
+  executed: ExecutedTool[],
+  writer: SSEWriter,
+) {
+  const followUp: Message[] = [
+    ...messages,
+    {
+      id: uuidv4(),
+      role: 'assistant',
+      content: '',
+      tool_calls: executed.map((e) => e.toolCall),
+    },
+    ...executed.map((e) => ({
+      id: uuidv4(),
+      role: 'tool' as const,
+      content: JSON.stringify(e.result),
+      tool_call_id: e.toolCall.id,
+    })),
+  ];
+  for await (const chunk of chatProvider.stream(followUp, model)) {
+    if (chunk.type === 'content') writer.writeContent(chunk.data);
+  }
+}
+
+/** Only plain user/assistant turns are replayed to the model. */
+function conversationOnly(messages: Message[]): Message[] {
+  return messages
+    .filter((m) => (m.role === 'user' || m.role === 'assistant') && m.content)
+    .map(({ id, role, content }) => ({ id, role, content }));
 }
 
 export async function POST(request: NextRequest) {
@@ -254,11 +242,10 @@ export async function POST(request: NextRequest) {
     // Extract user context from session
     const user = session.user as any;
     const userId = (user.governs_user_id || user.id || '') as string;
-    const orgId = user.org_id;
-    const apiKey = process.env.PRECHECK_API_KEY; // Use server-side API key
+    const orgId = (user.org_id || process.env.GOVERNS_ORG_ID || '') as string;
 
     const body: ChatRequest = await request.json();
-    const { messages, model, provider: requestProvider } = body;
+    const { messages, model, provider: requestProvider, resume } = body;
 
     if (!messages || !Array.isArray(messages)) {
       return Response.json(
@@ -267,111 +254,120 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Determine provider
-    const provider: Provider = requestProvider || (process.env.PROVIDER as Provider) || 'openai';
+    const provider: Provider = requestProvider || defaultProvider();
     const corrId = uuidv4();
 
-    // Create SSE response
-    const encoder = new TextEncoder();
     let controller: ReadableStreamDefaultController<Uint8Array>;
-
     const stream = new ReadableStream({
       start(ctrl) {
         controller = ctrl;
       },
     });
-
     const writer = new SSEWriter(controller!);
 
     // Handle the streaming in the background
     (async () => {
       try {
-        // Step 1: Rely on SDK to enrich precheck (policy/tool metadata/budget)
-        const finalOrgId = orgId || 'cmg83v4ki00005q6app5ouwrw';
-        const budgetContext = await fetchBudgetContext(userId, finalOrgId);
-
-        // Tool registration removed per latest integration guidelines
-
-        // Step 2: Build minimal precheck request (SDK will enrich)
-
-        // Check if this is a confirmation approved continuation
-        const lastMessage = messages[messages.length - 1];
-        const confirmationApprovedMatch = lastMessage?.content?.match(/\[CONFIRMATION_APPROVED:([^\]]+)\]/);
-
-        let precheckResponse;
-        if (confirmationApprovedMatch) {
-          // This is a continuation after confirmation approval, bypass precheck
-          const approvedCorrelationId = confirmationApprovedMatch[1];
-          console.log(`✅ CONFIRMATION APPROVED CONTINUATION: ${approvedCorrelationId}`);
-
-          // Clean up the messages by removing the confirmation token
-          const cleanedMessages = messages.map(msg => ({
-            ...msg,
-            content: msg.content.replace(/\[CONFIRMATION_APPROVED:[^\]]+\]\s*/, '') // Remove the token
-          }));
-
-          precheckResponse = {
-            decision: 'allow' as const,
-            reasons: ['Confirmation previously approved'],
-            content: {
-              messages: cleanedMessages
-            }
-          };
-        } else {
-          // Normal precheck flow
-          const precheckRequest = createChatPrecheckRequest(
-            messages,
-            provider,
-            corrId
+        let chatProvider: ChatProvider;
+        try {
+          chatProvider = createProvider(provider);
+        } catch (error) {
+          writer.writeError(
+            `Provider initialization failed: ${error instanceof Error ? error.message : 'Unknown error'}`
           );
-          precheckRequest.budget_context = budgetContext;
-
-          precheckResponse = await precheck(precheckRequest, userId);
+          return;
         }
-        // Send decision event
+        const modelToUse = model || chatProvider.getDefaultModel();
+        const history = conversationOnly(messages);
+
+        // ── Resume an approved request ──────────────────────────────────
+        // The platform is the only source of truth for approval: the
+        // approval is claimed (consumed) once, and exactly the payload the
+        // reviewer saw is executed.
+        if (resume?.correlationId) {
+          const approval = await consumeApproval(resume.correlationId);
+          if (!approval) {
+            writer.writeError('This request is not approved, has expired, or was already used.');
+            return;
+          }
+          writer.writeDecision('allow', ['confirmation.approved']);
+
+          if (approval.requestType === 'tool_call') {
+            const { tool, args, toolCallId } = approval.requestPayload as {
+              tool: string;
+              args: Record<string, any>;
+              toolCallId?: string;
+            };
+            const toolCall: ToolCall = {
+              id: toolCallId || `call_${uuidv4()}`,
+              type: 'function',
+              function: { name: tool, arguments: JSON.stringify(args) },
+            };
+            writer.writeToolCall(toolCall);
+            const data = await runTool(tool, args);
+            writer.writeToolResult({
+              tool_call_id: toolCall.id,
+              success: true,
+              data,
+              decision: 'allow',
+              reasons: ['confirmation.approved'],
+            });
+            await streamFollowUp(chatProvider, modelToUse, history, [{ toolCall, result: data }], writer);
+          } else {
+            const approvedMessages = conversationOnly(
+              (approval.requestPayload.messages as Message[]) || history,
+            );
+            for await (const chunk of chatProvider.stream(approvedMessages, modelToUse)) {
+              if (chunk.type === 'content') writer.writeContent(chunk.data);
+            }
+          }
+          writer.writeDone();
+          return;
+        }
+
+        // ── Normal turn ─────────────────────────────────────────────────
+        const budgetContext = await fetchBudgetContext(userId, orgId);
+
+        const precheckRequest = createChatPrecheckRequest(history, provider, corrId);
+        precheckRequest.budget_context = budgetContext;
+        const precheckResponse = await precheck(precheckRequest, userId);
+
         writer.writeDecision(precheckResponse.decision, precheckResponse.reasons);
 
-        // Step 2: Handle precheck decision
         if (precheckResponse.decision === 'deny') {
-          console.log('❌ REQUEST BLOCKED BY PRECHECK');
           writer.writeError(
             `Request blocked: ${precheckResponse.reasons?.join(', ') || 'Policy violation'}`
           );
-          writer.close();
           return;
         }
 
-        // Handle confirmation requirement for chat
         if (precheckResponse.decision === 'confirm') {
-          console.log('⏸️  CHAT REQUEST REQUIRES CONFIRMATION');
-
-          // Create pending confirmation via platform API
-          writer.writeError(
-            `Confirmation required: ${precheckResponse.reasons?.join(', ') || 'User confirmation needed'}`
-          );
-          writer.close();
+          const ticket = await requestConfirmation({
+            correlationId: corrId,
+            requestType: 'chat',
+            requestDesc: 'Send a chat message to the model',
+            requestPayload: { messages: history },
+            reasons: precheckResponse.reasons,
+          });
+          writer.writeConfirmation({ ...ticket, reasons: precheckResponse.reasons });
+          writer.writeDone();
           return;
         }
 
-        console.log('✅ REQUEST ALLOWED - Proceeding to LLM');
-
-        // Use possibly redacted messages from precheck response
-        const processedMessages = precheckResponse.content?.messages || messages;
+        // The model only ever sees precheck's output for this turn.
+        const processedMessages = applyChatTransform(history, precheckResponse);
+        if (precheckResponse.decision === 'transform') {
+          const redacted = textOut(precheckResponse);
+          if (redacted !== undefined) writer.writeRedactedInput(redacted);
+        }
 
         // Search for relevant memory context before sending to AI (LLM-compressed)
         let memoryContext = '';
         try {
-          const lastUserMessage = processedMessages
-            .filter(msg => msg.role === 'user')
-            .slice(-1)[0];
-          
+          const lastUserMessage = processedMessages.filter((m) => m.role === 'user').slice(-1)[0];
           if (lastUserMessage?.content) {
-            // LLM-optimized memory search
             const search = await searchMemoryContext(lastUserMessage.content, userId, 5);
             const recent = await getRecentMemoryContext(userId, 3);
-
-            console.log('Search:', search);
-            console.log('Recent:', recent);
             const contexts: string[] = [];
             if (search?.success && search?.context) contexts.push(search.context);
             if (recent?.success && recent?.context) contexts.push(recent.context);
@@ -381,140 +377,62 @@ export async function POST(request: NextRequest) {
           }
         } catch (error) {
           console.warn('Memory search failed:', error);
-          // Continue without memory context
         }
 
-        // Step 3: Get provider and stream response
-        let chatProvider;
-        try {
-          if (provider === 'openai') {
-            chatProvider = new OpenAIProvider();
-          } else if (provider === 'ollama') {
-            chatProvider = new OllamaProvider();
-          } else {
-            throw new Error(`Unsupported provider: ${provider}`);
+        let usageData: { inputTokens: number; outputTokens: number } | null = null;
+
+        // Disable tools by default. Enable only when clear intent is detected.
+        const lastUserMsg = processedMessages.filter((m) => m.role === 'user').slice(-1)[0]?.content || '';
+        const intendedToolNames = detectToolIntent(lastUserMsg);
+        const tools = AVAILABLE_TOOLS.filter((t) => intendedToolNames.includes(t.function.name));
+
+        const systemMessage: Message = {
+          id: uuidv4(),
+          role: 'system',
+          content: `You are a helpful assistant. Do NOT use tools unless strictly necessary to answer correctly. Prefer direct answers using your own knowledge. If a tool is required (e.g., weather, web search, file ops, payments, db, email, calendar), call exactly one appropriate tool with minimal parameters, otherwise answer directly. Placeholders such as <USER_EMAIL> mean a value was redacted by governance policy; use the placeholder as-is.${memoryContext}`,
+        };
+        const modelMessages = [systemMessage, ...processedMessages];
+
+        const executed: ExecutedTool[] = [];
+        for await (const chunk of chatProvider.stream(modelMessages, modelToUse, tools)) {
+          if (chunk.type === 'content') {
+            writer.writeContent(chunk.data);
+          } else if (chunk.type === 'tool_call') {
+            const toolCall = chunk.data as ToolCall;
+            writer.writeToolCall(toolCall);
+            const ran = await executeToolCall(toolCall, writer, userId, budgetContext);
+            if (ran) executed.push(ran);
+          } else if (chunk.type === 'usage') {
+            usageData = {
+              inputTokens: chunk.data.prompt_tokens || 0,
+              outputTokens: chunk.data.completion_tokens || 0,
+            };
           }
-        } catch (error) {
-          writer.writeError(
-            `Provider initialization failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+        }
+
+        if (executed.length > 0) {
+          await streamFollowUp(chatProvider, modelToUse, modelMessages, executed, writer);
+        }
+
+        writer.writeDone();
+
+        if (usageData && userId && orgId) {
+          await recordUsage(
+            userId,
+            orgId,
+            chatProvider.getName(),
+            modelToUse,
+            usageData.inputTokens,
+            usageData.outputTokens,
+            'chat',
+            corrId,
           );
-          writer.close();
-          return;
         }
-
-        // Step 4: Stream tokens with tool calling support
-        const modelToUse = model || chatProvider.getDefaultModel();
-
-        // Track usage data for recording
-        let usageData: {
-          inputTokens: number;
-          outputTokens: number;
-          model: string;
-          provider: string;
-        } | null = null;
-
-        try {
-          // Disable tools by default. Enable only when clear intent is detected.
-          const lastUserMsg = processedMessages.filter(m => m.role === 'user').slice(-1)[0]?.content || '';
-          const intendedToolNames = detectToolIntent(lastUserMsg);
-          const tools = AVAILABLE_TOOLS.filter(t => intendedToolNames.includes(t.function.name));
-
-          // Add a concise system message emphasizing tool restraint
-          const systemMessage: Message = {
-            id: uuidv4(),
-            role: 'system',
-            content: `You are a helpful assistant. Do NOT use tools unless strictly necessary to answer correctly. Prefer direct answers using your own knowledge. If a tool is required (e.g., weather, web search, file ops, payments, db, email, calendar), call exactly one appropriate tool with minimal parameters, otherwise answer directly.${memoryContext}`,
-          };
-          processedMessages.unshift(systemMessage);
-
-          for await (const chunk of chatProvider.stream(processedMessages, modelToUse, tools)) {
-            if (chunk.type === 'content') {
-              writer.writeContent(chunk.data);
-            } else if (chunk.type === 'tool_call') {
-              // Handle tool call
-              const toolCall = chunk.data as ToolCall;
-              console.log('Tool call received:', toolCall);
-              writer.writeToolCall(toolCall);
-
-              // Execute the tool call with platform metadata
-              // Skip precheck if this is a confirmation approved continuation
-              const skipPrecheck = confirmationApprovedMatch !== null;
-              await executeToolCall(
-                toolCall,
-                writer,
-                userId,
-                apiKey,
-                undefined,
-                budgetContext,
-                skipPrecheck,
-                lastMessage
-              );
-            } else if (chunk.type === 'usage') {
-              // Capture usage data for recording
-              usageData = {
-                inputTokens: chunk.data.prompt_tokens || 0,
-                outputTokens: chunk.data.completion_tokens || 0,
-                model: modelToUse,
-                provider: provider,
-              };
-            }
-          }
-
-          writer.writeDone();
-
-          // Record usage after successful completion
-          if (usageData && userId && finalOrgId) {
-            console.log('📊 Recording usage:', {
-              userId,
-              orgId: finalOrgId,
-              model: usageData.model,
-              inputTokens: usageData.inputTokens,
-              outputTokens: usageData.outputTokens,
-              provider: usageData.provider,
-              correlationId: corrId
-            });
-
-            try {
-              await recordUsage(
-                userId,
-                finalOrgId,
-                usageData.model,
-                usageData.inputTokens,
-                usageData.outputTokens,
-                'chat',
-                corrId,
-                {
-                  messageCount: processedMessages.length,
-                  provider: usageData.provider,
-                }
-              );
-              console.log('✅ Usage recorded successfully');
-            } catch (error) {
-              console.error('❌ Failed to record usage:', error);
-              // Don't throw - usage recording failure shouldn't break the chat
-            }
-          } else {
-            console.warn('⚠️ Usage recording skipped:', {
-              hasUsageData: !!usageData,
-              hasUserId: !!userId,
-              hasOrgId: !!finalOrgId,
-              usageData,
-              userId,
-              orgId: finalOrgId
-            });
-          }
-        } catch (error) {
-          writer.writeError(
-            `Streaming failed: ${error instanceof Error ? error.message : 'Unknown error'}`
-          );
-        } finally {
-          writer.close();
-        }
-
       } catch (error) {
         writer.writeError(
           `Request failed: ${error instanceof Error ? error.message : 'Unknown error'}`
         );
+      } finally {
         writer.close();
       }
     })();
@@ -524,8 +442,6 @@ export async function POST(request: NextRequest) {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
         'Connection': 'keep-alive',
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Headers': 'Content-Type',
       },
     });
 
@@ -539,15 +455,4 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
-}
-
-export async function OPTIONS() {
-  return new Response(null, {
-    status: 200,
-    headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
-    },
-  });
 }

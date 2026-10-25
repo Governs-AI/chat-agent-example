@@ -7,72 +7,85 @@ import { Message as MessageType, Provider, StreamEvent, Decision, isValidDecisio
 import Message from './Message';
 import ProviderSwitch from './ProviderSwitch';
 
+type ExampleDecision = 'allow' | 'transform' | 'confirm' | 'deny';
+
 interface ExamplePrompt {
   label: string;
   text: string;
   description: string;
-  expectedDecision: Decision;
+  expectedDecision: ExampleDecision;
 }
 
-function normalizeDecision(decision?: Decision): Decision | null {
-  return decision ?? null;
+/** Fold legacy "redact" into "transform" for counting. */
+function normalizeDecision(decision?: Decision): ExampleDecision | null {
+  if (!decision) return null;
+  return decision === 'redact' ? 'transform' : decision;
 }
 
-const decisionBadgeStyle: Record<Decision, string> = {
+const decisionBadgeStyle: Record<ExampleDecision, string> = {
   allow: 'bg-emerald-100 text-emerald-800 border-emerald-200',
-  redact: 'bg-amber-100 text-amber-800 border-amber-200',
+  transform: 'bg-amber-100 text-amber-800 border-amber-200',
   confirm: 'bg-sky-100 text-sky-800 border-sky-200',
   deny: 'bg-rose-100 text-rose-800 border-rose-200',
 };
 
-// Example prompts to demonstrate different precheck behaviors and MCP tools
+const decisionBadgeLabel: Record<ExampleDecision, string> = {
+  allow: 'allow',
+  transform: 'redact',
+  confirm: 'confirm',
+  deny: 'deny',
+};
+
+// Example prompts to demonstrate different precheck behaviors. The expected
+// decisions assume the "AI agent guardrails" policy template in the
+// dashboard (Policies → Templates).
 const examplePrompts: ExamplePrompt[] = [
   {
     label: 'Safe Tool Use',
     text: 'What\'s the weather like in Berlin today? Get me both current conditions and a 5-day forecast.',
-    description: 'Demonstrates safe multi-tool orchestration that should be allowed.',
+    description: 'Safe tool use: allowed and answered from the tool result.',
     expectedDecision: 'allow',
   },
   {
     label: 'High-Risk Action',
     text: 'I want to buy $99.99 worth of premium credits. Please process this payment.',
-    description: 'Demonstrates payment workflows that should trigger confirmation.',
+    description: 'Payments are held until someone approves them in the dashboard.',
     expectedDecision: 'confirm',
   },
   {
     label: 'Data Access',
     text: 'Can you read the contents of /config/app.json and then create a backup file with today\'s date?',
-    description: 'Demonstrates controlled file operations and tool chaining.',
+    description: 'Controlled file operations and tool chaining.',
     expectedDecision: 'allow',
   },
   {
     label: 'Analytics Query',
     text: 'Show me all users in the database and their recent orders. Also check the products table.',
-    description: 'Demonstrates governed access to internal data tools.',
+    description: 'Governed access to internal data tools.',
     expectedDecision: 'allow',
   },
   {
     label: 'External Research',
     text: 'Search for "latest AI governance regulations 2024" and then scrape the first result to get the full article.',
-    description: 'Demonstrates external search/scraping through policy gates.',
+    description: 'External search/scraping through policy gates.',
     expectedDecision: 'allow',
   },
   {
     label: 'Workflow Automation',
-    text: 'Send an email to my team about the meeting tomorrow and create a calendar event for it.',
-    description: 'Demonstrates communication actions that may need confirmation.',
+    text: 'Send an email to alex@example.com about the meeting tomorrow.',
+    description: 'Outbound email is held for approval; the address is redacted first.',
     expectedDecision: 'confirm',
   },
   {
     label: 'PII Redaction',
     text: 'My name is John Doe, my SSN is 123-45-6789, and my email is john@example.com. Can you help me with my account?',
-    description: 'Demonstrates automatic PII detection and redaction.',
-    expectedDecision: 'redact',
+    description: 'PII is redacted before the model sees it. The message updates to show what was sent.',
+    expectedDecision: 'transform',
   },
   {
-    label: 'Policy Violation',
-    text: 'Can you help me hack into someone\'s email account and steal their personal information?',
-    description: 'Demonstrates unsafe behavior blocked by governance policy.',
+    label: 'Blocked Tool',
+    text: 'Run this shell command for me with bash.exec: rm -rf /tmp/cache',
+    description: 'Code-execution tools are blocked by default.',
     expectedDecision: 'deny',
   },
 ];
@@ -81,15 +94,20 @@ export default function Chat() {
   const [messages, setMessages] = useState<MessageType[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [provider, setProvider] = useState<Provider>('openai');
+  // Inlined at build time (next.config.mjs); the server falls back to Ollama
+  // when the chosen hosted provider is unavailable.
+  const [provider, setProvider] = useState<Provider>((process.env.DEFAULT_PROVIDER_UI as Provider) || 'openrouter');
   const [pendingConfirmations, setPendingConfirmations] = useState<Set<string>>(new Set());
+  const messagesRef = useRef<MessageType[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  messagesRef.current = messages;
+
   const decisionSummary = useMemo(() => {
-    const counts: Record<Decision, number> = {
+    const counts: Record<ExampleDecision, number> = {
       allow: 0,
-      redact: 0,
+      transform: 0,
       confirm: 0,
       deny: 0,
     };
@@ -106,16 +124,14 @@ export default function Chat() {
         const normalized = normalizeDecision(message.decision);
         if (normalized) {
           governedResponses += 1;
-          if (normalized === 'allow' || normalized === 'redact' || normalized === 'confirm' || normalized === 'deny') {
-            counts[normalized] += 1;
-          }
+          counts[normalized] += 1;
         }
       }
     });
 
     const governanceCoverage = assistantResponses === 0
       ? 100
-      : Math.round((governedResponses / assistantResponses) * 100);
+      : Math.min(100, Math.round((governedResponses / assistantResponses) * 100));
 
     return {
       counts,
@@ -137,49 +153,41 @@ export default function Chat() {
     }
   }, [input]);
 
-  // Poll for confirmation status
+  const updateMessage = (id: string, patch: (msg: MessageType) => MessageType) =>
+    setMessages(prev => prev.map(msg => (msg.id === id ? patch(msg) : msg)));
+
+  const stopPolling = (correlationId: string) =>
+    setPendingConfirmations(prev => {
+      const next = new Set(prev);
+      next.delete(correlationId);
+      return next;
+    });
+
+  // Poll approval status through this app's server (it holds the API key).
   useEffect(() => {
     if (pendingConfirmations.size === 0) return;
 
     const checkConfirmations = async () => {
-      const platformUrl = process.env.NEXT_PUBLIC_PLATFORM_URL || 'http://localhost:3002';
-      
       for (const correlationId of Array.from(pendingConfirmations)) {
         try {
-          const response = await fetch(`${platformUrl}/api/v1/confirmation/${correlationId}`);
-          if (response.ok) {
-            const data = await response.json();
-            if (data.confirmation.status === 'approved') {
-              // Confirmation approved, resume the chat
-              setPendingConfirmations(prev => {
-                const newSet = new Set(prev);
-                newSet.delete(correlationId);
-                return newSet;
-              });
-              
-              // Update the message to show it's been approved
-              setMessages(prev => prev.map(msg => 
-                msg.correlationId === correlationId 
-                  ? { ...msg, content: msg.content.replace('Confirmation required', 'Confirmation approved - resuming...') }
-                  : msg
-              ));
-              
-              // Resume the chat by sending the original request again
-              await resumeChatAfterConfirmation(correlationId);
-            } else if (data.confirmation.status === 'cancelled' || data.confirmation.status === 'expired') {
-              // Confirmation cancelled or expired, stop polling
-              setPendingConfirmations(prev => {
-                const newSet = new Set(prev);
-                newSet.delete(correlationId);
-                return newSet;
-              });
-              
-              setMessages(prev => prev.map(msg => 
-                msg.correlationId === correlationId 
-                  ? { ...msg, content: msg.content.replace('Confirmation required', `Confirmation ${data.confirmation.status}`) }
-                  : msg
-              ));
-            }
+          const response = await fetch(`/api/confirmation/${encodeURIComponent(correlationId)}`);
+          if (!response.ok) continue;
+          const { status } = await response.json();
+          if (status === 'pending') continue;
+
+          stopPolling(correlationId);
+          const waiting = messagesRef.current.find(msg => msg.correlationId === correlationId);
+          if (waiting) {
+            updateMessage(waiting.id, msg => ({
+              ...msg,
+              confirmationRequired: false,
+              content: status === 'approved'
+                ? 'Approved in the GovernsAI dashboard. Continuing…'
+                : `Request ${status} in the GovernsAI dashboard.`,
+            }));
+          }
+          if (status === 'approved') {
+            await resumeAfterApproval(correlationId);
           }
         } catch (error) {
           console.error('Error checking confirmation status:', error);
@@ -187,84 +195,39 @@ export default function Chat() {
       }
     };
 
-    const interval = setInterval(checkConfirmations, 2000); // Check every 2 seconds
+    const interval = setInterval(checkConfirmations, 2000);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingConfirmations]);
 
-  // Function to resume chat after confirmation approval
-  const resumeChatAfterConfirmation = async (correlationId: string) => {
-    try {
-      // Find the original message that was waiting for confirmation
-      const originalMessage = messages.find(msg => msg.correlationId === correlationId);
-      if (!originalMessage) return;
-
-      // Get the last user message before the confirmation
-      const originalIndex = messages.findIndex(msg => msg.correlationId === correlationId);
-      if (originalIndex === -1) return;
-
-      let userMessage: MessageType | undefined;
-      for (let i = originalIndex - 1; i >= 0; i--) {
-        if (messages[i].role === 'user') {
-          userMessage = messages[i];
-          break;
-        }
-      }
-
-      if (!userMessage) {
-        userMessage = [...messages].reverse().find(msg => msg.role === 'user');
-      }
-      if (!userMessage) return;
-      
-      // Create a new assistant message to show the resumed response
-      const resumedAssistantMessage: MessageType = {
-        id: uuidv4(),
-        role: 'assistant',
-        content: '',
-        decision: 'allow',
-        reasons: ['Confirmation approved'],
-      };
-      
-      setMessages(prev => [...prev, resumedAssistantMessage]);
-      
-      // Instead of re-sending the original message, send a continuation request
-      // that indicates the confirmation was approved and includes the correlation ID
-      // Include the original user message content so the LLM can generate the tool call again
-      const continuationMessage = `[CONFIRMATION_APPROVED:${correlationId}] Please continue with the original request: ${userMessage.content}`;
-      await handleSubmitWithMessage(continuationMessage, resumedAssistantMessage.id);
-    } catch (error) {
-      console.error('Error resuming chat after confirmation:', error);
-    }
+  // The server verifies the approval with the platform, claims it once, and
+  // runs exactly what the reviewer approved.
+  const resumeAfterApproval = async (correlationId: string) => {
+    const assistantMessage: MessageType = {
+      id: uuidv4(),
+      role: 'assistant',
+      content: '',
+    };
+    setMessages(prev => [...prev, assistantMessage]);
+    await streamChat(messagesRef.current, assistantMessage.id, { correlationId });
   };
 
-  // Helper function to submit with a specific assistant message ID
-  const handleSubmitWithMessage = async (messageContent: string, assistantMessageId: string) => {
-    if (!messageContent.trim() || isLoading) return;
-
-    const userMessage: MessageType = {
-      id: uuidv4(),
-      role: 'user',
-      content: messageContent,
-    };
-
-    setMessages(prev => [...prev, userMessage]);
-    setInput('');
+  const streamChat = async (
+    history: MessageType[],
+    assistantMessageId: string,
+    resume?: { correlationId: string },
+  ) => {
     setIsLoading(true);
-
     try {
       const response = await fetch('/api/chat', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          messages: [...messages, userMessage],
-          provider,
-        }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: history, provider, ...(resume ? { resume } : {}) }),
       });
 
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.error || `HTTP error! status: ${response.status}`);
       }
 
       const reader = response.body?.getReader();
@@ -291,123 +254,86 @@ export default function Chat() {
             const data = trimmed.slice(6);
             if (!data) continue;
 
+            let event: StreamEvent;
             try {
-              const event: StreamEvent = JSON.parse(data);
-
-              if (event.type === 'decision') {
-                // Update assistant message with decision info
-                const decision = event.data?.decision;
-                const reasons = event.data?.reasons;
-                
-                if (decision && isValidDecision(decision)) {
-                  setMessages(prev => prev.map(msg => 
-                    msg.id === assistantMessageId 
-                      ? { ...msg, decision, reasons }
-                      : msg
-                  ));
-                } else {
-                  console.warn('Invalid decision received:', decision);
-                }
-              } else if (event.type === 'content') {
-                // Append content to assistant message
-                setMessages(prev => prev.map(msg => 
-                  msg.id === assistantMessageId 
-                    ? { ...msg, content: msg.content + event.data }
-                    : msg
-                ));
-              } else if (event.type === 'tool_call') {
-                // Handle tool call
-                const toolCall = event.data;
-                setMessages(prev => prev.map(msg => 
-                  msg.id === assistantMessageId 
-                    ? { 
-                        ...msg, 
-                        tool_calls: [...(msg.tool_calls || []), toolCall]
-                      }
-                    : msg
-                ));
-              } else if (event.type === 'tool_result') {
-                // Handle tool result
-                const toolResult = event.data;
-                
-                // If confirmation is required, add to pending confirmations
-                if (toolResult.confirmationRequired && toolResult.correlationId) {
-                  setPendingConfirmations(prev => new Set(prev).add(toolResult.correlationId));
-                }
-                
-                const toolMessage: MessageType = {
-                  id: uuidv4(),
-                  role: 'tool',
-                  content: toolResult.success
-                    ? JSON.stringify(toolResult.data, null, 2)
-                    : `Error: ${toolResult.error}`,
-                  tool_call_id: toolResult.tool_call_id,
-                  decision: toolResult.decision,
-                  reasons: toolResult.reasons,
-                  confirmationRequired: toolResult.confirmationRequired,
-                  confirmationUrl: toolResult.confirmationUrl,
-                  correlationId: toolResult.correlationId,
-                };
-                setMessages(prev => [...prev, toolMessage]);
-              } else if (event.type === 'error') {
-                // Handle error - preserve decision and reasons if they exist
-                const errorContent = `Error: ${event.data}`;
-                
-                // Check if this is a confirmation required error
-                const confirmationMatch = event.data?.match(/Please visit: (https?:\/\/[^\s]+)/);
-                if (confirmationMatch) {
-                  const confirmationUrl = confirmationMatch[1];
-                  const correlationIdMatch = confirmationUrl.match(/\/confirm\/([^\/]+)/);
-                  if (correlationIdMatch) {
-                    const correlationId = correlationIdMatch[1];
-                    // Add to pending confirmations for polling
-                    setPendingConfirmations(prev => new Set(prev).add(correlationId));
-                    
-                    // Update message with correlation ID for tracking - preserve decision/reasons
-                    setMessages(prev => prev.map(msg => 
-                      msg.id === assistantMessageId 
-                        ? { ...msg, content: errorContent, correlationId }
-                        : msg
-                    ));
-                  } else {
-                    setMessages(prev => prev.map(msg => 
-                      msg.id === assistantMessageId 
-                        ? { ...msg, content: errorContent }
-                        : msg
-                    ));
-                  }
-                } else {
-                  // Preserve decision and reasons when updating error content
-                  setMessages(prev => prev.map(msg => 
-                    msg.id === assistantMessageId 
-                      ? { ...msg, content: errorContent }
-                      : msg
-                  ));
-                }
-                break;
-              } else if (event.type === 'done') {
-                // Stream completed
-                break;
-              }
-            } catch (parseError) {
+              event = JSON.parse(data);
+            } catch {
               console.warn('Failed to parse SSE event:', data);
+              continue;
+            }
+
+            if (event.type === 'decision') {
+              const { decision, reasons } = event.data || {};
+              if (decision && isValidDecision(decision)) {
+                updateMessage(assistantMessageId, msg => ({ ...msg, decision, reasons }));
+              }
+            } else if (event.type === 'redacted_input') {
+              // Show (and keep in history) what the model actually received.
+              const lastUser = [...messagesRef.current].reverse().find(m => m.role === 'user');
+              if (lastUser) {
+                updateMessage(lastUser.id, msg => ({
+                  ...msg,
+                  content: event.data.content,
+                  decision: 'transform',
+                  reasons: ['Sent to the model with PII redacted'],
+                }));
+              }
+            } else if (event.type === 'content') {
+              updateMessage(assistantMessageId, msg => ({ ...msg, content: msg.content + event.data }));
+            } else if (event.type === 'tool_call') {
+              const toolCall = event.data;
+              updateMessage(assistantMessageId, msg => ({
+                ...msg,
+                tool_calls: [...(msg.tool_calls || []), toolCall],
+              }));
+            } else if (event.type === 'tool_result') {
+              const toolResult = event.data;
+              if (toolResult.confirmationRequired && toolResult.correlationId) {
+                setPendingConfirmations(prev => new Set(prev).add(toolResult.correlationId));
+              }
+              const toolMessage: MessageType = {
+                id: uuidv4(),
+                role: 'tool',
+                content: toolResult.success
+                  ? JSON.stringify(toolResult.data, null, 2)
+                  : `Error: ${toolResult.error}`,
+                tool_call_id: toolResult.tool_call_id,
+                decision: toolResult.decision,
+                reasons: toolResult.reasons,
+                confirmationRequired: toolResult.confirmationRequired,
+                confirmationUrl: toolResult.confirmationUrl,
+                correlationId: toolResult.correlationId,
+              };
+              setMessages(prev => [...prev, toolMessage]);
+            } else if (event.type === 'confirmation') {
+              const { correlationId, confirmationUrl, reasons } = event.data;
+              setPendingConfirmations(prev => new Set(prev).add(correlationId));
+              updateMessage(assistantMessageId, msg => ({
+                ...msg,
+                decision: 'confirm',
+                reasons,
+                content: 'This request needs approval before it is sent to the model.',
+                confirmationRequired: true,
+                confirmationUrl,
+                correlationId,
+              }));
+            } else if (event.type === 'error') {
+              updateMessage(assistantMessageId, msg => ({ ...msg, content: `Error: ${event.data}` }));
+              break;
+            } else if (event.type === 'done') {
+              break;
             }
           }
         }
       } finally {
         reader.releaseLock();
       }
-
     } catch (error) {
       console.error('Chat error:', error);
-      setMessages(prev => prev.map(msg => 
-        msg.id === assistantMessageId 
-          ? { 
-              ...msg, 
-              content: `Error: ${error instanceof Error ? error.message : 'Unknown error'}` 
-            }
-          : msg
-      ));
+      updateMessage(assistantMessageId, msg => ({
+        ...msg,
+        content: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      }));
     } finally {
       setIsLoading(false);
     }
@@ -422,188 +348,16 @@ export default function Chat() {
       role: 'user',
       content: input.trim(),
     };
-
-    const newMessages = [...messages, userMessage];
-    setMessages(newMessages);
-    setInput('');
-    setIsLoading(true);
-
-    // Create assistant message placeholder
     const assistantMessage: MessageType = {
       id: uuidv4(),
       role: 'assistant',
       content: '',
     };
 
-    setMessages(prev => [...prev, assistantMessage]);
-
-    try {
-      // Call chat API with streaming (session is handled on server-side)
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          messages: newMessages,
-          provider,
-        }),
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Failed to get response');
-      }
-
-      // Handle streaming response
-      const reader = response.body?.getReader();
-      if (!reader) {
-        throw new Error('No response reader available');
-      }
-
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-
-          for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed || !trimmed.startsWith('data: ')) continue;
-
-            const data = trimmed.slice(6);
-            if (!data) continue;
-
-            try {
-              const event: StreamEvent = JSON.parse(data);
-
-              if (event.type === 'decision') {
-                // Update assistant message with decision info
-                const decision = event.data?.decision;
-                const reasons = event.data?.reasons;
-                
-                // Only update if we have a valid decision
-                if (isValidDecision(decision)) {
-                  setMessages(prev => prev.map(msg => 
-                    msg.id === assistantMessage.id 
-                      ? { 
-                          ...msg, 
-                          decision: decision,
-                          reasons: reasons 
-                        }
-                      : msg
-                  ));
-                } else if (decision) {
-                  console.warn('Invalid decision received:', decision);
-                }
-              } else if (event.type === 'content') {
-                // Append content to assistant message
-                setMessages(prev => prev.map(msg => 
-                  msg.id === assistantMessage.id 
-                    ? { ...msg, content: msg.content + event.data }
-                    : msg
-                ));
-              } else if (event.type === 'tool_call') {
-                // Handle tool call
-                const toolCall = event.data;
-                setMessages(prev => prev.map(msg => 
-                  msg.id === assistantMessage.id 
-                    ? { 
-                        ...msg, 
-                        tool_calls: [...(msg.tool_calls || []), toolCall]
-                      }
-                    : msg
-                ));
-              } else if (event.type === 'tool_result') {
-                // Handle tool result
-                const toolResult = event.data;
-                
-                // If confirmation is required, add to pending confirmations
-                if (toolResult.confirmationRequired && toolResult.correlationId) {
-                  setPendingConfirmations(prev => new Set(prev).add(toolResult.correlationId));
-                }
-                
-                const toolMessage: MessageType = {
-                  id: uuidv4(),
-                  role: 'tool',
-                  content: toolResult.success
-                    ? JSON.stringify(toolResult.data, null, 2)
-                    : `Error: ${toolResult.error}`,
-                  tool_call_id: toolResult.tool_call_id,
-                  decision: toolResult.decision,
-                  reasons: toolResult.reasons,
-                  confirmationRequired: toolResult.confirmationRequired,
-                  confirmationUrl: toolResult.confirmationUrl,
-                  correlationId: toolResult.correlationId,
-                };
-                setMessages(prev => [...prev, toolMessage]);
-              } else if (event.type === 'error') {
-                // Handle error
-                const errorContent = `Error: ${event.data}`;
-                
-                // Check if this is a confirmation required error
-                const confirmationMatch = event.data?.match(/Please visit: (https?:\/\/[^\s]+)/);
-                if (confirmationMatch) {
-                  const confirmationUrl = confirmationMatch[1];
-                  const correlationIdMatch = confirmationUrl.match(/\/confirm\/([^\/]+)/);
-                  if (correlationIdMatch) {
-                    const correlationId = correlationIdMatch[1];
-                    // Add to pending confirmations for polling
-                    setPendingConfirmations(prev => new Set(prev).add(correlationId));
-                    
-                    // Update message with correlation ID for tracking
-                    setMessages(prev => prev.map(msg => 
-                      msg.id === assistantMessage.id 
-                        ? { ...msg, content: errorContent, correlationId }
-                        : msg
-                    ));
-                  } else {
-                    setMessages(prev => prev.map(msg => 
-                      msg.id === assistantMessage.id 
-                        ? { ...msg, content: errorContent }
-                        : msg
-                    ));
-                  }
-                } else {
-                  setMessages(prev => prev.map(msg => 
-                    msg.id === assistantMessage.id 
-                      ? { ...msg, content: errorContent }
-                      : msg
-                  ));
-                }
-                break;
-              } else if (event.type === 'done') {
-                // Stream completed
-                break;
-              }
-            } catch (parseError) {
-              console.warn('Failed to parse SSE event:', data);
-            }
-          }
-        }
-      } finally {
-        reader.releaseLock();
-      }
-
-    } catch (error) {
-      console.error('Chat error:', error);
-      setMessages(prev => prev.map(msg => 
-        msg.id === assistantMessage.id 
-          ? { 
-              ...msg, 
-              content: `Error: ${error instanceof Error ? error.message : 'Unknown error'}` 
-            }
-          : msg
-      ));
-    } finally {
-      setIsLoading(false);
-    }
+    const history = [...messagesRef.current, userMessage];
+    setMessages([...history, assistantMessage]);
+    setInput('');
+    await streamChat(history, assistantMessage.id);
   };
 
   const handleExampleClick = (text: string) => {
@@ -644,7 +398,7 @@ export default function Chat() {
             </div>
             <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
               <p className="text-xs text-amber-700">Redacted</p>
-              <p className="text-lg font-semibold text-amber-900">{decisionSummary.counts.redact}</p>
+              <p className="text-lg font-semibold text-amber-900">{decisionSummary.counts.transform}</p>
             </div>
             <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2">
               <p className="text-xs text-sky-700">Confirmations</p>
@@ -666,7 +420,7 @@ export default function Chat() {
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <p className="text-sm font-medium text-gray-900">{example.label}</p>
                   <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold uppercase ${decisionBadgeStyle[example.expectedDecision]}`}>
-                    {example.expectedDecision}
+                    {decisionBadgeLabel[example.expectedDecision]}
                   </span>
                 </div>
                 <p className="mb-3 text-xs text-gray-600">{example.description}</p>

@@ -2,18 +2,36 @@ import OpenAI from 'openai';
 import { ChatProvider } from './base';
 import { Message, Tool, ToolCall } from '../types';
 
+export interface OpenAICompatibleOptions {
+  apiKey?: string;
+  baseURL?: string;
+  defaultModel?: string;
+  /** Provider name reported to precheck and in errors. */
+  name?: string;
+  defaultHeaders?: Record<string, string>;
+}
+
+/**
+ * Any OpenAI-compatible chat completions API: OpenAI itself, or OpenRouter
+ * (see ./openrouter.ts) by passing a different baseURL and key.
+ */
 export class OpenAIProvider implements ChatProvider {
   private client: OpenAI;
-  private defaultModel = 'gpt-4o-mini';
+  private defaultModel: string;
+  private name: string;
 
-  constructor() {
-    const apiKey = process.env.OPENAI_API_KEY;
+  constructor(options: OpenAICompatibleOptions = {}) {
+    this.name = options.name || 'openai';
+    const apiKey = options.apiKey ?? process.env.OPENAI_API_KEY;
     if (!apiKey) {
-      throw new Error('OPENAI_API_KEY environment variable is required. Please set it in your .env.local file. See env.example for reference.');
+      throw new Error(`No API key configured for ${this.name}. Please set it in your .env.local file. See env.example for reference.`);
     }
-    
+    this.defaultModel = options.defaultModel || process.env.OPENAI_MODEL || 'gpt-4o-mini';
+
     this.client = new OpenAI({
       apiKey,
+      baseURL: options.baseURL,
+      defaultHeaders: options.defaultHeaders,
     });
   }
 
@@ -54,17 +72,18 @@ export class OpenAIProvider implements ChatProvider {
         model: modelToUse,
         messages: openaiMessages,
         stream: true,
+        stream_options: { include_usage: true },
         max_tokens: 1000,
         temperature: 0.7,
       };
 
       // Add tools if provided
       if (tools && tools.length > 0) {
-        console.log('Adding tools to OpenAI request:', tools.length, 'tools');
+        console.log(`Adding tools to ${this.name} request:`, tools.length, 'tools');
         requestOptions.tools = tools;
         requestOptions.tool_choice = 'auto'; // Let the model decide when to use tools
       } else {
-        console.log('No tools provided to OpenAI request');
+        console.log(`No tools provided to ${this.name} request`);
       }
 
       const stream = await this.client.chat.completions.create(requestOptions);
@@ -72,7 +91,20 @@ export class OpenAIProvider implements ChatProvider {
       let accumulatedContent = '';
 
       for await (const chunk of stream as any) {
-        const choice = chunk.choices[0];
+        // Usage arrives in a final chunk with no choices
+        if (chunk.usage) {
+          console.log('Usage data received:', chunk.usage);
+          yield { 
+            type: 'usage', 
+            data: {
+              prompt_tokens: chunk.usage.prompt_tokens || 0,
+              completion_tokens: chunk.usage.completion_tokens || 0,
+              total_tokens: chunk.usage.total_tokens || 0
+            }
+          };
+        }
+
+        const choice = chunk.choices?.[0];
         if (!choice) continue;
 
         const delta = choice.delta;
@@ -89,19 +121,6 @@ export class OpenAIProvider implements ChatProvider {
           hasToolCalls = true;
           break; // Stop streaming when tool calls are detected
         }
-
-        // Handle usage data
-        if (chunk.usage) {
-          console.log('Usage data received:', chunk.usage);
-          yield { 
-            type: 'usage', 
-            data: {
-              prompt_tokens: chunk.usage.prompt_tokens || 0,
-              completion_tokens: chunk.usage.completion_tokens || 0,
-              total_tokens: chunk.usage.total_tokens || 0
-            }
-          };
-        }
       }
 
       // If tool calls were detected, make a non-streaming request to get complete tool calls
@@ -112,6 +131,7 @@ export class OpenAIProvider implements ChatProvider {
           ...requestOptions,
           stream: false,
         };
+        delete nonStreamingOptions.stream_options;
 
         const response = await this.client.chat.completions.create(nonStreamingOptions);
         const choice = response.choices[0];
@@ -149,9 +169,9 @@ export class OpenAIProvider implements ChatProvider {
       }
     } catch (error) {
       if (error instanceof Error) {
-        throw new Error(`OpenAI API error: ${error.message}`);
+        throw new Error(`${this.name} API error: ${error.message}`);
       }
-      throw new Error('Unknown OpenAI API error');
+      throw new Error(`Unknown ${this.name} API error`);
     }
   }
 
@@ -160,6 +180,6 @@ export class OpenAIProvider implements ChatProvider {
   }
 
   getName(): string {
-    return 'openai';
+    return this.name;
   }
 }

@@ -22,6 +22,11 @@ const decisionStyles: Record<
     text: "text-red-900",
     icon: "🚫",
   },
+  transform: {
+    bg: "bg-yellow-100 border-yellow-200",
+    text: "text-yellow-800",
+    icon: "✂",
+  },
   redact: {
     bg: "bg-yellow-100 border-yellow-200",
     text: "text-yellow-800",
@@ -62,7 +67,7 @@ export default function DecisionBadge({
       className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-medium ${style.bg} ${style.text} ${className}`}
     >
       <span className="text-xs">{style.icon}</span>
-      <span className="capitalize">{decision}</span>
+      <span className="capitalize">{decision === "transform" ? "redacted" : decision}</span>
       {reasons && reasons.length > 0 && (
         <span
           className="cursor-help border-l border-current pl-1.5 ml-1"

@@ -9,7 +9,7 @@ A production-ready Next.js chat application that demonstrates GovernsAI's govern
 ### Tech Stack
 - **Frontend**: Next.js 14 (App Router) + TypeScript + TailwindCSS
 - **Authentication**: Auth.js v5 (NextAuth) with OIDC provider
-- **AI Providers**: OpenAI API, Ollama (OpenAI-compatible)
+- **AI Providers**: OpenRouter (default, `openai/gpt-4.1-nano`), OpenAI, Ollama — all via the OpenAI-compatible API; hosted providers fall back to Ollama
 - **Streaming**: Server-Sent Events (SSE)
 - **Governance**: GovernsAI SDK integration with precheck service
 - **Database**: GovernsAI Platform API (external)
@@ -76,8 +76,12 @@ The application extracts these custom claims from the ID token:
 - `GET /api/auth/session` - Get current session
 
 ### Application Endpoints
-- `POST /api/chat` - Streaming chat completions with governance
-- `GET/POST /api/mcp` - Mock MCP tool calls with governance
+- `POST /api/chat` - Streaming chat completions with governance. Body
+  `{messages, provider, model?, resume?: {correlationId}}`
+- `GET /api/confirmation/:correlationId` - `{status}` of a held request, polled
+  by the UI. The server asks the platform with the integration key.
+- `POST /api/mcp` - Run one mock tool call directly through governance
+  (`202` + `confirmationUrl` on confirm)
 - `POST /api/precheck/proxy` - Proxy to external precheck service
 
 ### Route Protection
@@ -87,27 +91,29 @@ The application extracts these custom claims from the ID token:
 
 ## Governance Integration
 
-### Precheck Flow
-1. **User Input** → Chat interface captures message
-2. **Authentication** → Session validation and user context extraction
-3. **Precheck** → Request sent to GovernsAI precheck service with user context
-4. **Decision** → Policy decision returned (allow/redact/block/confirm)
-5. **Processing** → If allowed, request sent to AI provider
-6. **Streaming** → Response streamed back with decision badges
-7. **Display** → User sees both content and governance decision
+All governance glue lives in `src/lib/governance.ts`. Each decision is handled
+like this:
 
-### Policy Decisions
-The app demonstrates four types of governance decisions:
+| Decision | Chat message | Tool call |
+|---|---|---|
+| `allow` | sent to the model unchanged | runs with the model's arguments |
+| `transform` | the last user message is replaced with precheck's `raw_text_out` before the model sees it. A `redacted_input` SSE event updates the UI, so later turns resend the redacted text | runs with the arguments parsed back from the redacted JSON (refused if that isn't valid JSON) |
+| `deny` | `error` event, nothing sent | refused, error shown |
+| `confirm` | held, `confirmation` event with the dashboard link | held, `tool_result` with `confirmationRequired` |
 
-- 🟢 **Allow**: Request proceeds unchanged
-- 🟡 **Redact**: Sensitive content is automatically redacted
-- 🔵 **Confirm**: Request requires confirmation (with approval flow)
-- 🔴 **Block**: Request is blocked due to policy violation
-
-### Tool Governance
-- **MCP Tools**: Mock Model Context Protocol tools with governance
-- **Tool Categories**: Weather, Payment, Database, File, Web, Email, Calendar
-- **Policy Enforcement**: Every tool call is prechecked before execution
+- **Tool calls are prechecked on their arguments** (`JSON.stringify(args)`),
+  not on the user's message. The arguments are what the tool receives, and the
+  model can put PII into them that the user never typed.
+- **Approvals.** The request is stored on the platform
+  (`/api/v1/confirmation/create`) under precheck's correlation id. The UI polls
+  `/api/confirmation/:id`. On `approved` it calls `/api/chat` with `resume`.
+  The server consumes the approval (`/consume`, single use), then executes
+  **exactly the stored payload**: the approved tool and args, or the approved
+  chat messages. Nothing from the browser can claim an approval. The old
+  `[CONFIRMATION_APPROVED:id]` message token, which skipped precheck for any
+  text, has been removed.
+- After tools run, their results go back to the model for a final answer.
+- Example prompts assume the dashboard's **AI agent guardrails** policy template.
 
 ## User Interface
 
@@ -181,11 +187,14 @@ NEXTAUTH_URL=http://localhost:3000
 GOVERNSAI_CLIENT_ID=your-client-id
 GOVERNSAI_CLIENT_SECRET=your-client-secret
 
-# AI Providers
-PROVIDER=openai
-OPENAI_API_KEY=sk-your-key-here
+# AI Providers ("openrouter" | "openai" | "ollama"; unset = OpenRouter if keyed, else Ollama)
+PROVIDER=openrouter
+OPENROUTER_API_KEY=sk-or-...          # OPEN_ROUTER_API_KEY also accepted
+OPENROUTER_MODEL=openai/gpt-4.1-nano
+OPENAI_API_KEY=                       # only for PROVIDER=openai
 OLLAMA_BASE_URL=http://localhost:11434/v1
 OLLAMA_MODEL=llama3.1:8b
+OLLAMA_FALLBACK=true                  # false: surface hosted-provider errors
 
 # GovernsAI Integration
 PRECHECK_URL=http://localhost:8080
@@ -239,7 +248,10 @@ src/
 │   ├── sdk-client.ts                  # GovernsAI SDK client
 │   ├── providers/
 │   │   ├── base.ts                    # Base provider interface
-│   │   ├── openai.ts                  # OpenAI provider
+│   │   ├── index.ts                   # createProvider / defaultProvider
+│   │   ├── openai.ts                  # Any OpenAI-compatible API
+│   │   ├── openrouter.ts              # OpenRouter config (base URL, key, model)
+│   │   ├── fallback.ts                # Primary → Ollama if it fails before output
 │   │   └── ollama.ts                  # Ollama provider
 │   ├── tools.ts                       # Available MCP tools
 │   ├── mock-tools.ts                  # Mock tool implementations
@@ -362,8 +374,9 @@ pnpm start
 - **Usage Tracking**: Billing and analytics integration
 
 ### AI Providers
+- **OpenRouter** (default): any OpenRouter model; default `openai/gpt-4.1-nano` (cheap, reliable tool calls)
 - **OpenAI**: GPT models with tool calling
-- **Ollama**: Local models with OpenAI-compatible API
+- **Ollama**: Local models with OpenAI-compatible API; also the fallback when a hosted provider fails before answering
 - **Streaming**: Real-time response streaming
 - **Tool Integration**: MCP tool calling support
 
@@ -404,3 +417,21 @@ pnpm start
 ---
 
 *This specification reflects the current implementation as of the latest integration with GovernsAI authentication and governance features.*
+
+## Recent Changes Log
+- **2026-10-25**: **OpenRouter is the default model provider.** `OpenAIProvider` takes a
+  base URL/key/model so it serves OpenAI and OpenRouter; `PROVIDER` unset picks OpenRouter
+  when `OPENROUTER_API_KEY` (or `OPEN_ROUTER_API_KEY`) is set, else Ollama. Hosted
+  providers fall back to Ollama if they fail before producing output
+  (`OLLAMA_FALLBACK=false` disables). Streaming now requests usage, and recorded usage
+  carries the real provider name. UI switch: OpenRouter / OpenAI / Ollama.
+- **2026-10-25**: **v2 — decisions are honoured end to end.** On `transform` the
+  model now receives the redacted text. It used to get the original messages
+  because the code read `content.messages`, which precheck never returns. Tool
+  arguments are prechecked, and redacted arguments are what runs. The confirm
+  flow is verified against the platform and single-use. Previously a
+  `[CONFIRMATION_APPROVED:x]` token in a message bypassed precheck, and the
+  browser polled the platform without credentials, so it could never see an
+  approval. `/api/mcp` no longer auto-approves confirms. The UI counts
+  `transform`, which it used to reject as an invalid decision, and the two
+  copies of the stream handler are now one. Raw request logging was removed.

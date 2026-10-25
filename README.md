@@ -44,13 +44,17 @@ The app demonstrates four types of governance decisions:
    
    Edit `.env.local` with your settings:
    ```env
-   # Provider selection: "openai" | "ollama"
-   PROVIDER=openai
-   
+   # Provider selection: "openrouter" | "openai" | "ollama"
+   PROVIDER=openrouter
+
+   # OpenRouter (default; any model with tool support)
+   OPENROUTER_API_KEY=sk-or-...
+   OPENROUTER_MODEL=openai/gpt-4.1-nano
+
    # OpenAI (if using OpenAI provider)
    OPENAI_API_KEY=sk-your-key-here
-   
-   # Ollama (if using local provider)
+
+   # Ollama (local provider, and the fallback for hosted ones)
    OLLAMA_BASE_URL=http://localhost:11434/v1
    OLLAMA_MODEL=llama3.1:8b
    
@@ -347,8 +351,8 @@ The precheck integration can be customized by:
 
 ### Environment Variables for Production
 ```env
-PROVIDER=openai
-OPENAI_API_KEY=your-production-key
+PROVIDER=openrouter
+OPENROUTER_API_KEY=your-production-key
 PRECHECK_URL=https://your-precheck-service.com/precheck
 PRECHECK_API_KEY=your-production-precheck-key
 ```
@@ -378,8 +382,10 @@ vercel --prod
 - Verify model is available: `ollama list`
 - Check `OLLAMA_BASE_URL` points to correct endpoint
 
-**OpenAI API errors**
-- Verify `OPENAI_API_KEY` is valid and has sufficient credits
+**OpenRouter / OpenAI API errors**
+- Verify `OPENROUTER_API_KEY` / `OPENAI_API_KEY` is valid and has credits
+- With Ollama running, a failing hosted provider falls back to it (look for
+  `falling back` in the server log); set `OLLAMA_FALLBACK=false` to see the error
 - Check API key permissions and rate limits
 
 **Streaming issues**

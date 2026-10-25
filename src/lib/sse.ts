@@ -102,6 +102,20 @@ export class SSEWriter {
     });
   }
   
+  writeConfirmation(confirmation: { correlationId: string; confirmationUrl: string; reasons?: string[] }) {
+    this.writeEvent({
+      type: 'confirmation',
+      data: confirmation,
+    });
+  }
+
+  writeRedactedInput(content: string) {
+    this.writeEvent({
+      type: 'redacted_input',
+      data: { content },
+    });
+  }
+
   writeDone() {
     this.writeEvent({
       type: 'done',

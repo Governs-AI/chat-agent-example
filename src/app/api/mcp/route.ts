@@ -4,6 +4,7 @@ import { precheck, createMCPPrecheckRequest, fetchBudgetContext } from '@/lib/pr
 import { MCPRequest, MCPResponse } from '@/lib/types';
 import { mockTools } from '@/lib/mock-tools';
 import { auth } from '@/lib/auth';
+import { argsAfterPrecheck, requestConfirmation } from '@/lib/governance';
 
 export async function POST(request: NextRequest) {
   try {
@@ -52,13 +53,37 @@ export async function POST(request: NextRequest) {
         } as MCPResponse, { status: 403 });
       }
 
-      // For confirm decision, we mock-approve (no actual UI confirmation in demo)
+      // Confirm: hold the exact call for review in the GovernsAI dashboard.
       if (precheckResponse.decision === 'confirm') {
-        console.log(`Mock-confirming MCP call: ${tool} with args:`, args);
+        const ticket = await requestConfirmation({
+          correlationId: corrId,
+          requestType: 'tool_call',
+          requestDesc: `Run ${tool}`,
+          requestPayload: { tool, args: args || {} },
+          reasons: precheckResponse.reasons,
+        });
+        return Response.json({
+          success: false,
+          error: 'Waiting for approval',
+          decision: precheckResponse.decision,
+          reasons: precheckResponse.reasons,
+          confirmationRequired: true,
+          correlationId: ticket.correlationId,
+          confirmationUrl: ticket.confirmationUrl,
+        }, { status: 202 });
       }
 
-      // Use possibly modified args from precheck response
-      const processedArgs = precheckResponse.content?.args || args || {};
+      // Transform: run with the redacted arguments, never the originals.
+      const processed = argsAfterPrecheck(args || {}, precheckResponse);
+      if (!processed.ok) {
+        return Response.json({
+          success: false,
+          error: processed.error,
+          decision: 'deny',
+          reasons: precheckResponse.reasons,
+        } as MCPResponse, { status: 422 });
+      }
+      const processedArgs = processed.args;
 
       // Step 3: Execute the MCP tool (mock implementation)
       const toolFunction = mockTools[tool as keyof typeof mockTools];
